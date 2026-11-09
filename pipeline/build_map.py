@@ -222,7 +222,7 @@ def main():
             p = pretty(t)
             if all(p.lower() not in q.lower() and q.lower() not in p.lower() for q in names):
                 names.append(p)
-            if len(names) == 4:  # two make the name; the rest tell apart regions that share one
+            if len(names) == 6:  # two make the name; the rest tell apart regions that share one
                 break
         cands.append(names)
         cxy = np.median(pos[members], axis=0)
@@ -233,23 +233,27 @@ def main():
                          "x": round(float(cxy[0]), 1), "y": round(float(cxy[1]), 1),
                          "size": int(len(members)), **region_stats(shows, members)})
 
-    # --- regions with the same automatic name get a third (then fourth) term,
-    #     then their main country, so no two read alike in guides and lists
-    for depth in (3, 4):
-        seen = Counter(k["auto"] for k in clusters)
-        for k, cand in zip(clusters, cands):
-            if seen[k["auto"]] > 1 and len(cand) >= depth:
-                k["auto"] = " · ".join(cand[:depth])
-    seen = Counter(k["auto"] for k in clusters)
-    for k in clusters:
-        if seen[k["auto"]] > 1 and k["countries"]:
-            k["auto"] += f" ({k['countries'][0][0]})"
+    # --- regions sharing an automatic name: each gets the one term that sets it
+    #     apart from its namesakes; failing that, the smaller ones get II, III...
+    groups: dict[str, list[int]] = {}
+    for c, k in enumerate(clusters):
+        groups.setdefault(k["auto"], []).append(c)
+    for base, members in groups.items():
+        if len(members) < 2:
+            continue
+        for c in members:
+            others = {t for o in members if o != c for t in cands[o][:3]}
+            extra = next((t for t in cands[c][2:] if t not in others), None)
+            if extra:
+                clusters[c]["auto"] = f"{base} · {extra}"
+        dup = Counter(clusters[c]["auto"] for c in members)
+        for name in [n for n, m in dup.items() if m > 1]:
+            same = sorted((c for c in members if clusters[c]["auto"] == name), key=lambda c: -clusters[c]["size"])
+            for r, c in enumerate(same[1:], start=2):
+                clusters[c]["auto"] = f"{name} {['II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'][min(r - 2, 6)]}"
     for c, k in enumerate(clusters):
         if not notes.get(str(keys[c]), {}).get("name"):
             k["label"] = k["auto"]
-    left = [a for a, m in Counter(k["label"] for k in clusters).items() if m > 1]
-    if left:
-        print(f"Regions still sharing a name: {left}")
 
     # --- colours: golden-angle hues, blended with spatial neighbours
     golden = 0.61803398875
