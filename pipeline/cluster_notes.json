@@ -1,0 +1,3 @@
+{
+  "_help": "Hand-written region names and blurbs. Keys are region numbers, shown as 'Region #12' in the site's region guide. A name replaces the automatic label on the map; a blurb replaces the automatic description. Example: \"12\": {\"name\": \"Nordic noir\", \"blurb\": \"Bleak crime dramas from Scandinavia, 2010s onward.\"}"
+}

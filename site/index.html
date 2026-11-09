@@ -1,0 +1,1894 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Couch Cartography</title>
+<meta name="description" content="An interactive map of TV shows, grouped by similarity.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='3' y='7' width='26' height='17' rx='3' fill='%23e8b04b'/><rect x='6' y='10' width='20' height='11' rx='1.5' fill='%2312141a'/><circle cx='11' cy='15' r='1.6' fill='%237dd3c0'/><circle cx='17' cy='13' r='1.6' fill='%23f28b82'/><circle cx='21' cy='18' r='1.6' fill='%23a5b4fc'/><rect x='12' y='25' width='8' height='2' rx='1' fill='%23e8b04b'/></svg>">
+<script>
+  // apply the saved theme before first paint, so parchment users never see a dark flash
+  try { if (JSON.parse(localStorage.getItem("cc.theme")) === "parchment") document.documentElement.dataset.theme = "parchment"; } catch {}
+</script>
+<style>
+  :root {
+    --bg: #0f1116; --panel: #171a22; --panel-2: #1f2330; --line: #2b3040;
+    --text: #e7e9ee; --muted: #9aa1b2; --accent: #e8b04b; --accent-ink: #1a1408; --parchment: #e8d9b5;
+    --radius: 10px; --shadow: 0 10px 30px rgba(0,0,0,.45);
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --hover-line: #3d4458; --tip-bg: rgba(15,17,22,.92);
+  }
+  /* light parchment / old-atlas theme */
+  :root[data-theme="parchment"] {
+    --bg: #ece0c3; --panel: #f6eedb; --panel-2: #e9dcbc; --line: #cdb98d;
+    --text: #2e2418; --muted: #6f5c40; --accent: #9a4b1c; --accent-ink: #fbf3e2; --parchment: #6b4a22;
+    --shadow: 0 8px 24px rgba(74,52,20,.22); --hover-line: #a98f5e; --tip-bg: rgba(246,238,219,.96);
+  }
+  :root[data-theme="parchment"] body { font-family: var(--font); }
+  :root[data-theme="parchment"] .brand b { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 15px; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); overflow: hidden; }
+  button, input, select { font: inherit; color: inherit; }
+  #map { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  #map.dragging { cursor: grabbing; }
+
+  /* top bar */
+  .bar { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; gap: 8px; align-items: center; pointer-events: none; z-index: 5; }
+  .bar > * { pointer-events: auto; }
+  .brand { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 7px 12px; box-shadow: var(--shadow); white-space: nowrap; }
+  .brand b { font-weight: 650; letter-spacing: .2px; }
+  .brand small { color: var(--muted); }
+  .search { position: relative; flex: 0 1 340px; min-width: 0; }
+  .search input { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; box-shadow: var(--shadow); outline: none; }
+  .search input:focus { border-color: var(--accent); }
+  .results { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; display: none; }
+  .results.open { display: block; }
+  .results button { display: flex; width: 100%; justify-content: space-between; gap: 8px; text-align: left; background: none; border: 0; padding: 8px 12px; cursor: pointer; }
+  .results button:hover, .results button.active { background: var(--panel-2); }
+  .results small { color: var(--muted); flex: none; }
+  .spacer { flex: 1; }
+  .btn { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; cursor: pointer; box-shadow: var(--shadow); white-space: nowrap; }
+  .btn:hover { border-color: var(--hover-line); }
+  .btn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .badge[hidden] { display: none; }
+  .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-size: 12px; text-align: center; }
+
+  /* filter panel */
+  .filters { position: fixed; top: 64px; left: 12px; width: 320px; max-height: calc(100% - 110px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; z-index: 4; display: none; }
+  .filters.open { display: block; }
+  .filters h3 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 600; }
+  .filters h3:first-child { margin-top: 0; }
+  .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { background: none; border: 0; padding: 5px 10px; cursor: pointer; color: var(--muted); }
+  .seg button.on { background: var(--panel-2); color: var(--text); }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { border: 1px solid var(--line); background: none; border-radius: 999px; padding: 3px 10px; cursor: pointer; font-size: 13px; }
+  .chip:hover { border-color: var(--hover-line); }
+  .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .chip .x { margin-left: 4px; opacity: .7; }
+  select, .kwinput { width: 100%; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; outline: none; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .kwwrap { position: relative; }
+  .kwwrap .results { top: calc(100% + 2px); }
+  .count { margin-top: 14px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+  .link { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; }
+
+  /* detail panel */
+  .detail { position: fixed; top: 64px; right: 12px; width: 380px; max-height: calc(100% - 110px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); z-index: 4; display: none; }
+  .detail.open { display: block; }
+  .detail .head { display: flex; gap: 12px; padding: 14px; }
+  .detail img { width: 92px; height: 138px; object-fit: cover; border-radius: 6px; background: var(--panel-2); flex: none; }
+  .detail h2 { margin: 0 24px 2px 0; font-size: 18px; line-height: 1.25; }
+  .detail .sub { color: var(--muted); font-size: 13px; }
+  .detail .close { position: absolute; top: 8px; right: 8px; background: none; border: 0; font-size: 22px; line-height: 1; color: var(--muted); cursor: pointer; padding: 4px 8px; }
+  .detail section { padding: 0 14px 14px; }
+  .detail h4 { margin: 4px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 600; }
+  .detail p { margin: 0; }
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 13px; margin-top: 8px; }
+  .facts dt { color: var(--muted); }
+  .facts dd { margin: 0; }
+  .sim { display: grid; gap: 2px; }
+  .sim button { display: flex; align-items: center; gap: 8px; text-align: left; background: none; border: 0; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+  .sim button:hover { background: var(--panel-2); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .sim small { color: var(--muted); margin-left: auto; }
+
+  /* hints, tooltip, footer */
+  .tip { position: fixed; pointer-events: none; background: var(--tip-bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-size: 13px; z-index: 6; display: none; white-space: nowrap; }
+  .foot { position: fixed; left: 12px; right: 12px; bottom: 10px; display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; pointer-events: none; z-index: 3; }
+  .foot a { color: var(--muted); pointer-events: auto; }
+  .loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); z-index: 2; }
+  .zoom { position: fixed; right: 12px; bottom: 36px; display: grid; gap: 6px; z-index: 3; }
+  .zoom .btn { width: 38px; padding: 6px 0; text-align: center; font-size: 16px; }
+  .zoom .compass { color: var(--parchment); padding: 7px 0; }
+  .zoom .compass svg { display: block; margin: auto; transition: transform .5s cubic-bezier(.3,1.4,.5,1); }
+  .zoom .compass:hover svg { transform: rotate(-22deg); }
+  .zoom .compass.spin svg { transform: rotate(360deg); transition-duration: .6s; }
+
+  /* era slider: two range inputs on one track */
+  .era-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  .era-head b { color: var(--text); font-weight: 600; }
+  .range2 { position: relative; height: 26px; margin: 2px 6px 0; }
+  .range2 .track { position: absolute; left: 0; right: 0; top: 11px; height: 4px; border-radius: 2px; background: var(--line); }
+  .range2 .fill { position: absolute; top: 0; bottom: 0; background: var(--accent); border-radius: 2px; }
+  .range2 input { position: absolute; left: -6px; width: calc(100% + 12px); top: 3px; margin: 0; height: 20px; background: none;
+                  pointer-events: none; -webkit-appearance: none; appearance: none; z-index: 1; }
+  .range2 input::-webkit-slider-runnable-track { background: none; height: 20px; }
+  .range2 input::-moz-range-track { background: none; }
+  .range2 input::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto; width: 16px; height: 16px; margin-top: 2px; border-radius: 50%;
+                  background: var(--panel); border: 2px solid var(--accent); cursor: pointer; }
+  .range2 input::-moz-range-thumb { pointer-events: auto; width: 12px; height: 12px; border-radius: 50%; background: var(--panel); border: 2px solid var(--accent); cursor: pointer; }
+  .range2 input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+  .seg-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 6px; }
+  .seg-row > span { color: var(--muted); font-size: 13px; }
+
+  /* region guides, bridge, compare */
+  .tool-kicker { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  .tool-title { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-style: italic; font-weight: 500;
+                color: var(--parchment); font-size: 21px; line-height: 1.25; margin: 2px 26px 4px 0; }
+  .tool-pad { padding: 14px; }
+  .blurb { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 15px; line-height: 1.5; }
+  .stats { display: flex; flex-wrap: wrap; gap: 5px; }
+  .stats span { border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; font-size: 12.5px; }
+  .stats small { color: var(--muted); margin-left: 3px; }
+  .stats .shared { border-color: var(--accent); }
+  .tool-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tool-actions .btn, .marks .btn { box-shadow: none; padding: 6px 10px; font-size: 13px; }
+  .path { display: grid; gap: 2px; }
+  .path button { display: grid; grid-template-columns: 22px 10px 1fr auto; align-items: center; gap: 8px; text-align: left;
+                 background: none; border: 0; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+  .path button:hover { background: var(--panel-2); }
+  .path .n { color: var(--muted); font-size: 12px; text-align: right; }
+  .path small { color: var(--muted); }
+  .path .end { font-weight: 600; }
+  .vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
+  .vs button { background: none; border: 0; padding: 0; cursor: pointer; text-align: left; font-weight: 600; font-size: 15px; }
+  .vs button:last-child { text-align: right; }
+  .vs span { color: var(--muted); }
+  .score { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 30px; color: var(--parchment); line-height: 1.1; }
+  .meter { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 6px 0 4px; }
+  .meter i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .back { margin: 10px 14px 0; font-size: 13px; }
+  .pick-bar { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 6; background: var(--panel); border: 1px solid var(--accent);
+              border-radius: var(--radius); box-shadow: var(--shadow); padding: 8px 12px; display: flex; gap: 10px; align-items: center; max-width: calc(100% - 24px); }
+  .pick-bar[hidden], .era-bar[hidden] { display: none; }
+  /* import, for you, coverage */
+  .rec { display: grid; grid-template-columns: 22px 10px 1fr auto; gap: 8px; align-items: start; width: 100%; text-align: left;
+         background: none; border: 0; padding: 6px; border-radius: 6px; cursor: pointer; }
+  .rec:hover { background: var(--panel-2); }
+  .rec .n { color: var(--muted); font-size: 12px; text-align: right; padding-top: 1px; }
+  .rec .dot { margin-top: 5px; }
+  .rec .why { display: block; color: var(--muted); font-size: 12px; }
+  .rec .sc { color: var(--accent); font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 1px; }
+  .imp-src { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .imp-src:last-child { border-bottom: 0; }
+  .imp-src small { color: var(--muted); }
+  .miss { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+  details summary { cursor: pointer; color: var(--accent); font-size: 13px; margin-top: 6px; }
+  .bigstat { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 30px; color: var(--parchment); line-height: 1.1; }
+  .reg-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; width: 100%; text-align: left; background: none; border: 0;
+             padding: 5px 6px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .reg-row:hover { background: var(--panel-2); }
+  .reg-row small { color: var(--muted); }
+
+  /* era animation */
+  .era-bar { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); width: min(520px, calc(100% - 24px)); z-index: 5;
+             background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+             padding: 8px 10px; display: flex; gap: 10px; align-items: center; }
+  .era-bar .btn { box-shadow: none; width: 38px; padding: 6px 0; text-align: center; flex: none; }
+  .era-mid { flex: 1; min-width: 0; }
+  .era-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .era-year { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-style: italic; font-size: 24px; color: var(--parchment); line-height: 1; }
+  .era-count { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .era-bar input[type=range] { width: 100%; accent-color: var(--accent); margin: 4px 0 0; }
+
+  /* where to watch, lists, toast */
+  .svc { display: inline-flex; align-items: center; gap: 6px; }
+  .svc img, .prov img { width: 22px; height: 22px; border-radius: 5px; flex: none; background: var(--panel-2); }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 8px; cursor: pointer; }
+  .check input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+  .hint-sm { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .prov { display: grid; grid-template-columns: 56px 1fr; gap: 6px 10px; align-items: start; font-size: 13px; }
+  .prov dt { color: var(--muted); padding-top: 3px; }
+  .prov dd { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .prov span { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 2px; border: 1px solid var(--line); border-radius: 7px; }
+  .prov span.mine { border-color: var(--accent); }
+  .wtw-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .wtw-head h4 { margin: 0; }
+  .wtw-head select { width: auto; padding: 3px 6px; font-size: 12px; }
+  .jw { color: var(--muted); font-size: 11px; margin-top: 8px; }
+  .marks { display: flex; gap: 6px; flex-wrap: wrap; }
+  .marks .btn { box-shadow: none; padding: 6px 10px; font-size: 13px; }
+  .hours { color: var(--parchment); font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-style: italic; margin-top: 6px; }
+  .toast { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 14px; box-shadow: var(--shadow); z-index: 7; display: none; max-width: calc(100% - 32px); }
+  .toast.open { display: block; }
+  .loading { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-style: italic; color: var(--parchment); font-size: 17px; }
+
+  @media (max-width: 720px) {
+    .bar { top: 8px; left: 8px; right: 8px; flex-wrap: wrap; }
+    .brand small, .hide-sm { display: none; }
+    .search { flex: 1 1 100%; order: 3; }
+    .filters, .detail { left: 8px; right: 8px; width: auto; top: auto; bottom: 8px; max-height: 62%; }
+    .foot .hint { display: none; }
+    .zoom { display: none; }
+    /* bottom of the screen belongs to the panels on phones */
+    .era-bar { bottom: auto; top: 98px; }
+    .era-year { font-size: 20px; }
+    .pick-bar { top: 98px; font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="map" aria-label="Map of TV shows"></canvas>
+<div class="loading" id="loading">Unfolding the map…</div>
+<div class="toast" id="toast" role="status"></div>
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+<input type="file" id="historyFile" accept=".csv,.json,text/csv,application/json" multiple hidden>
+
+<div class="bar">
+  <div class="brand"><b>Couch Cartography</b><small id="countLabel"></small></div>
+  <div class="search">
+    <input id="q" type="search" placeholder="Search shows…  ( / )" autocomplete="off" aria-label="Search shows">
+    <div class="results" id="qres"></div>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn" id="forYouBtn" title="Shows picked for you from what you've watched">✦<span class="hide-sm"> For you</span></button>
+  <button class="btn" id="eraBtn" title="Watch the map grow year by year (E)">⏵<span class="hide-sm"> Era</span></button>
+  <button class="btn" id="surpriseBtn" title="Pick a well-rated show from the area in view (S)">🎲<span class="hide-sm"> Surprise me</span></button>
+  <button class="btn hide-sm" id="labelsBtn" title="Toggle labels (L)">Labels</button>
+  <button class="btn" id="filtersBtn">Filters<span class="badge" id="fbadge" hidden></span></button>
+</div>
+
+<div class="filters" id="filters">
+  <h3>Highlight by genre, type & keyword</h3>
+  <div class="row" style="margin-bottom:8px">
+    <span style="color:var(--muted)">Match</span>
+    <div class="seg"><button id="mAny" class="on">Any (OR)</button><button id="mAll">All (AND)</button></div>
+  </div>
+  <div class="chips" id="genreChips"></div>
+  <div class="chips" id="typeChips" style="margin-top:6px"></div>
+  <div class="kwwrap" style="margin-top:8px">
+    <input class="kwinput" id="kw" placeholder="Add a keyword (e.g. time travel, anime, heist)" autocomplete="off">
+    <div class="results" id="kwres"></div>
+  </div>
+  <div class="chips" id="kwChips" style="margin-top:6px"></div>
+
+  <h3>Narrow down</h3>
+  <div class="hint-sm" id="regionFilter" hidden></div>
+  <div class="two">
+    <select id="fLang" aria-label="Language"></select>
+    <select id="fNet" aria-label="Network"></select>
+    <select id="fStatus" aria-label="Status"></select>
+    <select id="fRating" aria-label="Rating">
+      <option value="0">Any rating</option><option value="6">6+ ★</option><option value="7">7+ ★</option><option value="8">8+ ★</option>
+    </select>
+    <select id="fVotes" aria-label="Minimum votes">
+      <option value="0">Any votes</option><option value="20">20+ votes</option><option value="100">100+ votes</option>
+      <option value="500">500+ votes</option><option value="2000">2,000+ votes</option>
+    </select>
+    <select id="fOrigin" aria-label="Country of origin"></select>
+  </div>
+
+  <h3>First aired</h3>
+  <div class="era-head"><span>Year range</span><b id="eraLabel">Any year</b></div>
+  <div class="range2">
+    <div class="track"><div class="fill" id="eraFill"></div></div>
+    <input type="range" id="eraFrom" aria-label="First aired from year">
+    <input type="range" id="eraTo" aria-label="First aired up to year">
+  </div>
+
+  <h3>Time to finish</h3>
+  <div class="chips" id="hourChips"></div>
+
+  <h3>Where to watch</h3>
+  <select id="fCountry" aria-label="Country for where to watch"></select>
+  <div class="hint-sm">Tick the services you subscribe to:</div>
+  <div class="chips" id="svcChips" style="margin-top:6px"></div>
+  <label class="check"><input type="checkbox" id="fMine"> Only shows streaming on my services</label>
+
+  <h3>My lists</h3>
+  <div class="seg" id="listSeg"><button data-l="all" class="on">All</button><button data-l="hide">Hide watched</button><button data-l="only">Watchlist only</button></div>
+  <div class="hint-sm"><span id="listCounts"></span></div>
+  <div class="row" style="margin-top:8px">
+    <button class="btn" id="historyBtn" style="box-shadow:none">⇪ Import watch history</button>
+    <button class="btn" id="coverageBtn" style="box-shadow:none">Map coverage</button>
+  </div>
+  <div class="hint-sm">From Trakt, IMDb or Netflix. Backup: <button class="link" id="exportBtn">Save</button> · <button class="link" id="importBtn">Restore</button></div>
+
+  <h3>Map display</h3>
+  <div class="seg-row"><span>Dot size</span><div class="seg" id="sizeSeg"><button data-size="pop">Popularity</button><button data-size="seasons">Seasons</button></div></div>
+  <div class="seg-row"><span>Theme (T)</span><div class="seg" id="themeSeg"><button data-theme="dark">Dark</button><button data-theme="parchment">Parchment</button></div></div>
+
+  <div class="count"><span id="matchCount"></span><button class="link" id="clearBtn">Clear all</button></div>
+</div>
+
+<aside class="detail" id="detail" aria-live="polite"></aside>
+<div class="pick-bar" id="pickBar" role="status" hidden></div>
+<div class="era-bar" id="eraBar" hidden>
+  <button class="btn" id="eraPlay" aria-label="Pause">⏸</button>
+  <div class="era-mid">
+    <div class="era-top"><span class="era-year" id="eraYear"></span><span class="era-count" id="eraCount"></span></div>
+    <input type="range" id="eraScrub" aria-label="Year">
+  </div>
+  <button class="btn" id="eraClose" aria-label="Close the era view">×</button>
+</div>
+<div class="tip" id="tip"></div>
+<div class="zoom"><button class="btn" id="zin" aria-label="Zoom in">+</button><button class="btn" id="zout" aria-label="Zoom out">−</button><button class="btn compass" id="zreset" aria-label="Reset view" title="Reset view">
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+    <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-opacity=".45" stroke-width=".8"/>
+    <g fill="currentColor" fill-opacity=".38">
+      <path d="M17.7 6.3 13.4 12H12v-1.4z"/><path d="M17.7 17.7 12 13.4V12h1.4z"/>
+      <path d="M6.3 17.7 10.6 12H12v1.4z"/><path d="M6.3 6.3 12 10.6V12h-1.4z"/>
+    </g>
+    <path d="M23 12 14 10 12 12z" fill="currentColor"/><path d="M23 12 14 14 12 12z" fill="currentColor" fill-opacity=".55"/>
+    <path d="M12 23 14 14 12 12z" fill="currentColor"/><path d="M12 23 10 14 12 12z" fill="currentColor" fill-opacity=".55"/>
+    <path d="M1 12 10 14 12 12z" fill="currentColor"/><path d="M1 12 10 10 12 12z" fill="currentColor" fill-opacity=".55"/>
+    <path d="M12 1 10 10 12 12z" fill="var(--parchment)"/><path d="M12 1 14 10 12 12z" fill="var(--accent)"/>
+    <circle cx="12" cy="12" r="1.1" fill="var(--bg)" stroke="currentColor" stroke-width=".7"/>
+  </svg>
+</button></div>
+<div class="foot">
+  <span class="hint">Scroll to zoom · drag to pan · click a show or region name · L labels · T theme · E era</span>
+  <span>Data from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability by <a href="https://www.justwatch.com/" target="_blank" rel="noopener">JustWatch</a>. <span id="updated"></span></span>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("map"), ctx = canvas.getContext("2d");
+  const IMG = "https://image.tmdb.org/t/p/w185";
+  // service logos: TMDB gives a path, JustWatch a full URL
+  const logoURL = (l) => (/^https:\/\//.test(l) ? l : "https://image.tmdb.org/t/p/w45" + l);
+  let curDetail = {};  // details of the open show, for re-rendering where to watch
+  const PARCHMENT = "#e8d9b5";
+  // canvas colours per theme (CSS tokens can't reach the canvas)
+  const THEMES = {
+    dark: { bg: "#0f1116", ink: PARCHMENT, halo: "rgba(15,17,22,.88)", text: "#d9dce4", strong: "#fff", hover: "#fff",
+            sel: "#e8b04b", simLine: "rgba(232,176,75,.35)", glow: "#e8b04b", glowStroke: "rgba(232,217,181,.95)", dim: 0.13, all: 0.92, rec: "#5fd3c4" },
+    parchment: { bg: "#ece0c3", ink: "#5b3d18", halo: "rgba(240,229,203,.92)", text: "#3a2d1c", strong: "#1f160b", hover: "#2e2418",
+            sel: "#9a4b1c", simLine: "rgba(154,75,28,.42)", glow: "#c98a2e", glowStroke: "rgba(122,72,20,.95)", dim: 0.18, all: 0.9, rec: "#1d7568" },
+  };
+  let theme = THEMES[store0("theme")] ? store0("theme") : "dark", T = THEMES[theme];
+  let sizeBy = store0("size") === "seasons" ? "seasons" : "pop";
+  document.documentElement.dataset.theme = theme;
+  function store0(k) { try { return JSON.parse(localStorage.getItem("cc." + k)); } catch { return null; } }
+  const SERIF = '"Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif';
+  const langName = (() => {
+    let dn = null; try { dn = new Intl.DisplayNames(["en"], { type: "language" }); } catch {}
+    return (c) => { try { return (dn && dn.of(c)) || c; } catch { return c; } };
+  })();
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fold = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+  let D, S, N;                         // dataset, show columns, count
+  let byId = new Map();                // show id -> index
+  let match = null;                    // Uint8Array of filter matches, or null when no filters
+  let selected = -1, hover = -1, showLabels = true;
+  const view = { s: 1, x: 0, y: 0 };  // screen = world * s + (x, y)
+  let W = 0, H = 0, dpr = 1, minScale = 1;
+  const detailCache = new Map();
+
+  // ------------------------------------------------------------ filters state
+  const F = { mode: "any", genres: new Set(), types: new Set(), kws: new Set(), lang: -1, net: -1, status: -1, rating: 0, from: 0, to: 0,
+              votes: 0, origin: -1, region: 0, hours: new Set(), mine: false, list: "all" };
+  const BUCKETS = [["A weekend", "< 10 hrs", 0, 10], ["A few weeks", "10–40 hrs", 10, 40],
+                   ["A season of life", "40–100 hrs", 40, 100], ["The long haul", "100+ hrs", 100, Infinity]];
+
+  // ------------------------------------------------- per-viewer storage
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem("cc." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem("cc." + k, JSON.stringify(v)); } catch {} },
+  };
+  let marks = store.get("marks", {});       // show id -> "w" (watched) | "l" (watchlist)
+  let markArr = new Uint8Array(0), listIdx = [];
+  let services = new Set(store.get("services", []));
+  let country = store.get("country", "IN");
+  let PI = null;                            // providers/index.json
+  const provCache = new Map();              // cc -> providers/<cc>.json
+  let svcOK = null;                         // per show: streams on my services in `country`
+  const regionName = (() => {
+    let dn = null; try { dn = new Intl.DisplayNames(["en"], { type: "region" }); } catch {}
+    return (c) => { try { return (dn && dn.of(c)) || c; } catch { return c; } };
+  })();
+
+  // ------------------------------------------------------------------ load
+  fetch("data/points.json").then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(init).catch((e) => {
+    $("loading").textContent = "Could not load data/points.json - run the pipeline first (" + e.message + ")";
+  });
+
+  function init(data) {
+    D = data; S = data.shows; N = S.id.length;
+    for (let i = 0; i < N; i++) byId.set(S.id[i], i);
+    S.oc ||= S.id.map(() => []); S.ns ||= S.id.map(() => 0); D.countries ||= [];  // data from before these columns
+    S.r = new Float32Array(N);
+    computeRadii();
+    S.colDark = S.col; S.colParch = S.col.map(inkColour);
+    S.col = theme === "parchment" ? S.colParch : S.colDark;
+    buildGrid();
+    rebuildMarks();
+    buildFilterUI();
+    $("loading").remove();
+    $("countLabel").textContent = N.toLocaleString() + " shows";
+    $("updated").textContent = "Updated " + new Date(D.updated).toLocaleDateString();
+    resize(); resetView(false);
+    readHash();
+    hashReady = true;
+    loadProviderIndex();
+    draw();
+  }
+
+  // ------------------------------------------------- dot size and theme
+  function computeRadii() {
+    for (let i = 0; i < N; i++)
+      S.r[i] = sizeBy === "seasons"
+        ? 1.1 + 0.75 * Math.sqrt(Math.min(30, Math.max(1, S.ns[i])))   // 1 season ~1.9px, 30 seasons ~5.2px
+        : 1.4 + 3.2 * Math.pow(1 - i / N, 3);                          // shows are in popularity order
+  }
+  function setSize(mode, persist = true) {
+    sizeBy = mode; if (persist) store.set("size", mode);
+    document.querySelectorAll("#sizeSeg [data-size]").forEach((b) => b.classList.toggle("on", b.dataset.size === mode));
+    if (D) { computeRadii(); draw(); scheduleHash(); }
+  }
+  // cluster colours are tuned for a dark sky; on parchment, use darker, less saturated inks
+  function inkColour(hex) {
+    const n = parseInt(hex.slice(1), 16), r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+    let h = 0, s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+    if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h = (h * 60 + 360) % 360; s = Math.min(0.62, s * 0.85); const L = 0.2 + l * 0.38;
+    return `hsl(${h.toFixed(0)} ${(s * 100).toFixed(0)}% ${(L * 100).toFixed(0)}%)`;
+  }
+  function setTheme(name, persist = true) {
+    theme = THEMES[name] ? name : "dark"; T = THEMES[theme];
+    document.documentElement.dataset.theme = theme;
+    if (persist) store.set("theme", theme);
+    document.querySelectorAll("#themeSeg [data-theme]").forEach((b) => b.classList.toggle("on", b.dataset.theme === theme));
+    if (D) {
+      S.col = theme === "parchment" ? S.colParch : S.colDark;
+      if (selected >= 0 && $("detail").classList.contains("open")) renderDetail(selected, curDetail);
+      draw();
+    }
+  }
+
+  // ------------------------------------------------------- spatial index
+  const CELL = 8; let grid;
+  function buildGrid() {
+    grid = new Map();
+    for (let i = 0; i < N; i++) {
+      const k = Math.floor(S.x[i] / CELL) * 4096 + Math.floor(S.y[i] / CELL);
+      let a = grid.get(k); if (!a) grid.set(k, (a = [])); a.push(i);
+    }
+  }
+  function nearest(sx, sy, maxPx = 10) {
+    const wx = (sx - view.x) / view.s, wy = (sy - view.y) / view.s, rad = maxPx / view.s;
+    let best = -1, bd = Infinity;
+    const c0 = Math.floor((wx - rad) / CELL), c1 = Math.floor((wx + rad) / CELL);
+    const r0 = Math.floor((wy - rad) / CELL), r1 = Math.floor((wy + rad) / CELL);
+    for (let c = c0; c <= c1; c++) for (let r = r0; r <= r1; r++) {
+      const a = grid.get(c * 4096 + r); if (!a) continue;
+      for (const i of a) {
+        if (match && !match[i]) continue;
+        if (era && (!S.y0[i] || S.y0[i] > era.year)) continue;
+        const dx = S.x[i] - wx, dy = S.y[i] - wy, d = dx * dx + dy * dy;
+        const hit = rad + S.r[i] / view.s;
+        if (d < bd && d < hit * hit) { bd = d; best = i; }
+      }
+    }
+    return best;
+  }
+
+  // ----------------------------------------------------------- drawing
+  let queued = false;
+  function draw() { if (!queued) { queued = true; requestAnimationFrame(render); } }
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1; W = innerWidth; H = innerHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    minScale = Math.min(W, H) / 1100;
+    if (D && !fitted) resetView(false);  // first fit happened while the page had no size
+    draw();
+  }
+  let fitted = false;
+  function resetView(anim = true) {
+    if (!W || !H) return;
+    fitted = true;
+    const s = Math.min(W, H) / 1060, to = { s, x: (W - 1000 * s) / 2, y: (H - 1000 * s) / 2 + 10 };
+    anim ? animateTo(to) : Object.assign(view, to); draw();
+  }
+
+  function render() {
+    queued = false;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = T.bg; ctx.fillRect(0, 0, W, H);
+    const zoom = view.s / minScale, grow = Math.min(2.6, Math.pow(zoom, 0.45));
+    if (theme === "parchment") drawPaper();
+    const x0 = -view.x / view.s - 5, y0 = -view.y / view.s - 5, x1 = (W - view.x) / view.s + 5, y1 = (H - view.y) / view.s + 5;
+
+    const mode = tool && tool.onMap ? tool.kind : null;  // coverage / for-you overlays stay while a show is open
+    const covered = mode === "coverage" && tool.seen ? tool.seen : null;
+    const pass = (wantMatch, alpha) => {
+      ctx.globalAlpha = alpha;
+      for (let i = N - 1; i >= 0; i--) {          // popular shows drawn last (on top)
+        if (match && !!match[i] !== wantMatch) continue;
+        if (era && (!S.y0[i] || S.y0[i] > era.year)) continue;
+        const x = S.x[i], y = S.y[i];
+        if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+        const r = S.r[i] * grow * (match && !wantMatch ? 0.7 : 1);
+        const sx = x * view.s + view.x, sy = y * view.s + view.y;
+        ctx.fillStyle = S.col[i];
+        ctx.globalAlpha = covered ? (covered[S.cl[i]] ? (markArr[i] === 1 ? alpha : alpha * 0.55) : alpha * 0.1)
+                        : markArr[i] === 1 ? alpha * 0.28 : alpha;
+        if (r < 1.6) ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+        else { ctx.beginPath(); ctx.arc(sx, sy, r, 0, 6.2832); ctx.fill(); }
+      }
+    };
+    if (match) { pass(false, T.dim); pass(true, 1); } else pass(true, T.all);
+    ctx.globalAlpha = 1;
+
+    // watchlist: a soft gold glow
+    if (listIdx.length) {
+      ctx.save(); ctx.shadowColor = T.glow; ctx.shadowBlur = 12; ctx.strokeStyle = T.glowStroke; ctx.lineWidth = 1.6;
+      for (const i of listIdx) {
+        if (match && !match[i]) continue;
+        const x = S.x[i], y = S.y[i]; if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+        ctx.beginPath(); ctx.arc(x * view.s + view.x, y * view.s + view.y, S.r[i] * grow + 3, 0, 6.2832); ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // era: shows that started this year get a ring
+    if (era) {
+      ctx.save(); ctx.strokeStyle = T.sel; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.85;
+      for (let i = 0; i < N; i++) {
+        if (S.y0[i] !== era.year || (match && !match[i])) continue;
+        const x = S.x[i], y = S.y[i]; if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+        ctx.beginPath(); ctx.arc(x * view.s + view.x, y * view.s + view.y, S.r[i] * grow + 3.5, 0, 6.2832); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    drawTool();
+    if (covered || (mode === "foryou" && tool.recs)) {
+      const list = covered ? null : tool.recs.slice(0, 25).map((r) => r.i);
+      ctx.save(); ctx.lineWidth = covered ? 1.2 : 2; ctx.strokeStyle = covered ? T.strong : T.rec;
+      if (!covered) { ctx.shadowColor = T.rec; ctx.shadowBlur = 10; }
+      const ring = (i) => { const x = S.x[i], y = S.y[i]; if (x < x0 || x > x1 || y < y0 || y > y1) return;
+        ctx.beginPath(); ctx.arc(x * view.s + view.x, y * view.s + view.y, S.r[i] * grow + (covered ? 2 : 4), 0, 6.2832); ctx.stroke(); };
+      if (covered) { ctx.globalAlpha = 0.7; for (let i = 0; i < N; i++) if (markArr[i] === 1) ring(i); } else list.forEach(ring);
+      ctx.restore();
+    }
+
+    // selection: ring + lines to similar shows
+    if (selected >= 0) {
+      const d = detailCache.get(chunkOf(S.id[selected]))?.[S.id[selected]];
+      const sx = S.x[selected] * view.s + view.x, sy = S.y[selected] * view.s + view.y;
+      if (d) {
+        ctx.strokeStyle = T.simLine; ctx.lineWidth = 1;
+        for (const id of d.sim) { const j = byId.get(id); if (j == null) continue;
+          ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(S.x[j] * view.s + view.x, S.y[j] * view.s + view.y); ctx.stroke(); }
+      }
+      ctx.strokeStyle = T.sel; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(sx, sy, S.r[selected] * grow + 5, 0, 6.2832); ctx.stroke();
+    }
+    if (hover >= 0 && hover !== selected) {
+      ctx.strokeStyle = T.hover; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(S.x[hover] * view.s + view.x, S.y[hover] * view.s + view.y, S.r[hover] * grow + 3, 0, 6.2832); ctx.stroke();
+    }
+    labelHits = [];
+    if (showLabels) drawLabels(zoom, x0, y0, x1, y1, grow);
+    scheduleHash();
+  }
+
+  // old-atlas paper: faint graticule that moves with the map, darker edges
+  function drawPaper() {
+    ctx.save();
+    ctx.strokeStyle = "rgba(110,80,40,.10)"; ctx.lineWidth = 1;
+    const step = 100 * view.s >= 60 ? 100 : 200;
+    for (let v = -400; v <= 1400; v += step) {
+      const sx = v * view.s + view.x, sy = v * view.s + view.y;
+      if (sx > 0 && sx < W) { ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); ctx.stroke(); }
+      if (sy > 0 && sy < H) { ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(W, sy); ctx.stroke(); }
+    }
+    const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) * 0.62);
+    g.addColorStop(0, "rgba(120,85,40,0)"); g.addColorStop(1, "rgba(120,85,40,.22)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  function drawLabels(zoom, x0, y0, x1, y1, grow) {
+    const boxes = [];
+    const fits = (b) => { for (const o of boxes) if (b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]) return false; boxes.push(b); return true; };
+    const text = (t, sx, sy, font, color, spacing = 0) => {
+      ctx.font = font;
+      if ("letterSpacing" in ctx) ctx.letterSpacing = spacing + "px";
+      const w = ctx.measureText(t).width, h = +(font.match(/(\d+(?:\.\d+)?)px/) || [, 12])[1];
+      const b = [sx - w / 2 - 3, sy - h / 2 - 2, sx + w / 2 + 3, sy + h / 2 + 2];
+      if (b[2] < 0 || b[0] > W || b[3] < 0 || b[1] > H || !fits(b)) return;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.lineWidth = 3.5; ctx.lineJoin = "round"; ctx.strokeStyle = T.halo; ctx.strokeText(t, sx, sy);
+      ctx.fillStyle = color; ctx.fillText(t, sx, sy);
+      if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
+      return b;
+    };
+    // selected + hovered first so they always win
+    for (const i of [selected, hover, ...toolNodes()]) if (i >= 0 && !eraHidden(i))
+      text(S.name[i], S.x[i] * view.s + view.x, S.y[i] * view.s + view.y - S.r[i] * grow - 10, "600 13px system-ui", T.strong);
+    if (zoom < 2.2) {
+      // cluster names: parchment ink in an old-atlas serif, larger for bigger regions
+      const order = D.clusters.map((c, i) => i).sort((a, b) => D.clusters[b].size - D.clusters[a].size);
+      const big = D.clusters[order[0]]?.size || 1;
+      ctx.globalAlpha = zoom < 1.6 ? 1 : (2.2 - zoom) / 0.6;
+      const maxClusters = Math.round(28 * zoom * zoom);  // biggest regions first; more appear as you zoom in
+      for (const c of order.slice(0, maxClusters)) { const k = D.clusters[c];
+        if (era && eraShare(c) < 0.15) continue;  // a region is named once it has really arrived
+        const px = (12 + 4 * Math.sqrt(k.size / big)).toFixed(1);
+        const b = text(k.label, k.x * view.s + view.x, k.y * view.s + view.y, `italic 500 ${px}px ${SERIF}`, T.ink, 0.6);
+        if (b && ctx.globalAlpha > 0.4) labelHits.push([b, c]); }
+      ctx.globalAlpha = 1;
+    }
+    if (zoom > 1.6) {
+      let placed = 0; const limit = Math.min(220, 40 + zoom * 20);
+      for (let i = 0; i < N && placed < limit; i++) {
+        if (match && !match[i]) continue;
+        if (era && (!S.y0[i] || S.y0[i] > era.year)) continue;
+        const x = S.x[i], y = S.y[i]; if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+        const before = boxes.length;
+        text(S.name[i], x * view.s + view.x, y * view.s + view.y - S.r[i] * grow - 8, "12px system-ui", T.text);
+        if (boxes.length > before) placed++;
+      }
+    }
+  }
+
+  // --------------------------------------------------------- interaction
+  const pointers = new Map(); let drag = null, moved = false, pinch = null;
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, [e.clientX, e.clientY]);
+    moved = false; anim = null;
+    if (pointers.size === 1) drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+    if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), s: view.s }; drag = null; }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pinch && pointers.size === 2) {
+      const [a, b] = [...pointers.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      zoomAt((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (pinch.s * d / pinch.d) / view.s); moved = true; return;
+    }
+    if (drag) {
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) { moved = true; canvas.classList.add("dragging"); }
+      if (moved) { view.x = drag.vx + dx; view.y = drag.vy + dy; draw(); }
+      hideTip(); return;
+    }
+    if (e.pointerType === "mouse") {
+      const i = nearest(e.clientX, e.clientY), lc = i < 0 ? labelAt(e.clientX, e.clientY) : -1;
+      if (i !== hover) { hover = i; draw(); }
+      i >= 0 ? showTip(i, e.clientX, e.clientY) : lc >= 0 ? showRegionTip(lc, e.clientX, e.clientY) : hideTip();
+      canvas.style.cursor = i >= 0 || lc >= 0 ? "pointer" : "";
+    }
+  });
+  const up = (e) => {
+    pointers.delete(e.pointerId); canvas.classList.remove("dragging");
+    if (pointers.size < 2) pinch = null;
+    if (drag && !moved) {
+      const lc = labelAt(e.clientX, e.clientY);
+      if (lc >= 0 && !pickMode) openRegion(lc);
+      else { const i = nearest(e.clientX, e.clientY, e.pointerType === "mouse" ? 10 : 18); i >= 0 ? select(i, false) : closeDetail(true); }
+    }
+    if (pointers.size === 0) drag = null;
+  };
+  canvas.addEventListener("pointerup", up);
+  canvas.addEventListener("pointercancel", up);
+  canvas.addEventListener("pointerleave", () => { if (hover >= 0) { hover = -1; draw(); } hideTip(); });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault(); anim = null;
+    const f = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018));
+    zoomAt(e.clientX, e.clientY, f);
+  }, { passive: false });
+
+  function zoomAt(sx, sy, f) {
+    const s = Math.max(minScale * 0.7, Math.min(minScale * 60, view.s * f)); f = s / view.s;
+    view.x = sx - (sx - view.x) * f; view.y = sy - (sy - view.y) * f; view.s = s; draw();
+  }
+  $("zin").onclick = () => animateTo(zoomTarget(1.8));
+  $("zout").onclick = () => animateTo(zoomTarget(1 / 1.8));
+  $("zreset").onclick = () => {
+    const b = $("zreset"); b.classList.remove("spin"); void b.offsetWidth; b.classList.add("spin");
+    setTimeout(() => b.classList.remove("spin"), 650);
+    resetView(true);
+  };
+  function zoomTarget(f) { const s = view.s * f; return { s, x: W / 2 - (W / 2 - view.x) * f, y: H / 2 - (H / 2 - view.y) * f }; }
+
+  let anim = null;
+  function animateTo(to, ms = 550) {
+    const from = { ...view }, t0 = performance.now(); anim = to;
+    const step = (t) => {
+      if (anim !== to) return;
+      const k = Math.min(1, (t - t0) / ms), e = k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+      view.s = from.s + (to.s - from.s) * e; view.x = from.x + (to.x - from.x) * e; view.y = from.y + (to.y - from.y) * e;
+      draw(); if (k < 1) requestAnimationFrame(step); else anim = null;
+    };
+    requestAnimationFrame(step);
+  }
+  function flyTo(i) {
+    const s = Math.max(view.s, minScale * 4);
+    const offset = innerWidth > 720 && $("detail").classList.contains("open") ? -200 : 0;
+    const cy = innerWidth > 720 ? H / 2 : H * 0.28;
+    animateTo({ s, x: W / 2 + offset - S.x[i] * s, y: cy - S.y[i] * s });
+  }
+
+  const tip = $("tip");
+  function showTip(i, x, y) {
+    const yr = S.y0[i] ? ` (${S.y0[i]}${S.y1[i] && S.y1[i] !== S.y0[i] ? "–" + S.y1[i] : ""})` : "";
+    tip.textContent = S.name[i] + yr; tip.style.display = "block";
+    const w = tip.offsetWidth; tip.style.left = Math.min(x + 14, W - w - 8) + "px"; tip.style.top = (y + 14) + "px";
+  }
+  function hideTip() { tip.style.display = "none"; }
+
+  addEventListener("resize", resize);
+  addEventListener("keydown", (e) => {
+    const typing = /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName);
+    if (e.key === "Escape") {
+      if (typing) document.activeElement.blur(); closeResults();
+      if (pickMode) endPick(); else closeDetail();
+      return;
+    }
+    if (typing) return;
+    if (e.key === "l" || e.key === "L") toggleLabels();
+    if (e.key === "t" || e.key === "T") setTheme(theme === "dark" ? "parchment" : "dark");
+    if (e.key === "/") { e.preventDefault(); $("q").focus(); }
+    if (e.key === "f" || e.key === "F") $("filtersBtn").click();
+    if (e.key === "s" || e.key === "S") surprise();
+    if (e.key === "e" || e.key === "E") era ? stopEra() : startEra();
+  });
+  function toggleLabels() { showLabels = !showLabels; $("labelsBtn").classList.toggle("on", showLabels); draw(); }
+  $("labelsBtn").classList.add("on");
+  $("labelsBtn").onclick = toggleLabels;
+
+  // ------------------------------------------------------------ details
+  const chunkOf = (id) => String(id % D.chunks).padStart(2, "0");
+  async function getDetail(id) {
+    const c = chunkOf(id);
+    if (!detailCache.has(c)) {
+      const r = await fetch(`data/details/${c}.json`); detailCache.set(c, r.ok ? await r.json() : {});
+    }
+    return detailCache.get(c)[id];
+  }
+  async function select(i, fly) {
+    if (pickMode) {
+      const { kind, from } = pickMode; endPick();
+      if (i === from) { toast("Pick a different show."); return startPick(kind, from); }
+      return kind === "bridge" ? runBridge(from, i) : runCompare(from, i);
+    }
+    selected = i; draw();
+    scheduleHash();
+    if (innerWidth <= 720) $("filters").classList.remove("open"), $("filtersBtn").classList.remove("on");
+    const box = $("detail"); box.classList.add("open");
+    box.innerHTML = `<button class="close" aria-label="Close">×</button><div class="head"><div><h2>${esc(S.name[i])}</h2><div class="sub">Loading…</div></div></div>`;
+    box.querySelector(".close").onclick = closeDetail;
+    if (fly) flyTo(i);
+    const d = await getDetail(S.id[i]);
+    if (selected !== i) return;
+    renderDetail(i, d || {}); draw();
+  }
+  function renderDetail(i, d) {
+    curDetail = d;
+    const yr = d.fa ? d.fa.slice(0, 4) + (d.st === "Ended" || d.st === "Canceled" ? (d.la && d.la.slice(0, 4) !== d.fa.slice(0, 4) ? "–" + d.la.slice(0, 4) : "") : "–") : "";
+    const sub = [yr, (d.n || []).slice(0, 2).join(", "), d.r].filter(Boolean).join(" · ");
+    const lang = D.languages[S.lang[i]];
+    const facts = [
+      ["Seasons", d.s ? `${d.s} season${d.s > 1 ? "s" : ""}, ${d.e} episodes` : ""],
+      ["Runtime", d.rt ? (d.est ? "about " : "") + d.rt + " min an episode" : ""],
+      ["Status", d.st], ["Type", d.ty],
+      ["Rating", d.vc >= 5 ? `${d.va.toFixed(1)} ★ (${d.vc.toLocaleString()} votes)` : ""],
+      ["Language", lang ? langName(lang) : ""],
+      ["Country", (d.oc || []).map(regionName).join(", ")],
+      ["Created by", (d.cr || []).join(", ")], ["Starring", (d.ca || []).slice(0, 5).join(", ")],
+    ].filter((f) => f[1]);
+    const sims = (d.sim || []).map((id) => byId.get(id)).filter((j) => j != null);
+    const box = $("detail");
+    const back = tool ? { region: "region guide", bridge: "bridge", compare: "comparison", import: "import",
+                          foryou: "For you", coverage: "map coverage" }[tool.kind] : "";
+    box.innerHTML = `
+      <button class="close" aria-label="Close">×</button>
+      ${back ? `<button class="link back" id="toolBack">← Back to ${back}</button>` : ""}
+      <div class="head">
+        ${d.p ? `<img src="${IMG}${esc(d.p)}" alt="" loading="lazy">` : ""}
+        <div>
+          <h2>${esc(S.name[i])}</h2>
+          ${d.on ? `<div class="sub">${esc(d.on)}</div>` : ""}
+          <div class="sub">${esc(sub)}</div>
+          ${d.hrs ? `<div class="hours">~${hoursText(d.hrs)} to finish</div>` : ""}
+          <div class="chips" style="margin-top:8px">${(d.g || []).map((g) => `<button class="chip" data-genre="${esc(g)}">${esc(g)}</button>`).join("")}</div>
+        </div>
+      </div>
+      <section class="marks">
+        <button class="btn ${marks[S.id[i]] === "w" ? "on" : ""}" data-mark="w">${marks[S.id[i]] === "w" ? "✓ Watched" : "Mark watched"}</button>
+        <button class="btn ${marks[S.id[i]] === "l" ? "on" : ""}" data-mark="l">${marks[S.id[i]] === "l" ? "★ On watchlist" : "＋ Watchlist"}</button>
+        <button class="btn ${isLoved(S.id[i]) ? "on" : ""}" data-love title="Loved it: counts double for For you">${isLoved(S.id[i]) ? "♥ Loved it" : "♡ Loved it"}</button>
+        ${ratings[S.id[i]] && !isLoved(S.id[i]) ? `<span class="hint-sm" style="align-self:center;margin:0">You rated it ${ratings[S.id[i]]}/10</span>` : ""}
+        <button class="btn" data-pick="compare" title="Compare with another show">⇄ Compare</button>
+        <button class="btn" data-pick="bridge" title="Find a chain of similar shows to another show">⤳ Bridge from here</button>
+      </section>
+      ${d.o ? `<section><h4>Overview</h4><p>${esc(d.o)}</p></section>` : ""}
+      <section><dl class="facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl></section>
+      <div id="wtw">${wtwHTML(i)}</div>
+      ${sims.length ? `<section><h4>Similar shows</h4><div class="sim">${sims.map((j) =>
+        `<button data-i="${j}"><span class="dot" style="background:${S.col[j]}"></span>${esc(S.name[j])}<small>${S.y0[j] || ""}</small></button>`).join("")}</div></section>` : ""}
+      <section><a href="https://www.themoviedb.org/tv/${S.id[i]}" target="_blank" rel="noopener" style="color:var(--accent)">View on TMDB ↗</a></section>`;
+    box.querySelector(".close").onclick = closeDetail;
+    box.querySelectorAll(".sim button").forEach((b) => (b.onclick = () => select(+b.dataset.i, true)));
+    box.querySelectorAll("[data-mark]").forEach((b) => (b.onclick = () => { setMark(S.id[i], b.dataset.mark); renderDetail(i, d); }));
+    box.querySelectorAll("[data-pick]").forEach((b) => (b.onclick = () => startPick(b.dataset.pick, i)));
+    const love = box.querySelector("[data-love]"); if (love) love.onclick = () => { toggleLoved(i); renderDetail(i, d); };
+    if ($("toolBack")) $("toolBack").onclick = () => closeDetail();
+    bindWtw();
+    box.querySelectorAll("[data-genre]").forEach((b) => (b.onclick = () => {
+      const gi = D.genres.indexOf(b.dataset.genre); if (gi < 0) return;
+      F.genres.add(gi); syncChips(); applyFilters();
+    }));
+  }
+  function closeDetail(soft = false) {
+    if (tool && selected >= 0) { selected = -1; showTool(); scheduleHash(); draw(); return; }  // back to the tool
+    if (tool && soft) return;  // a click on empty map keeps a bridge or comparison open
+    if (selected < 0 && !tool && !$("detail").classList.contains("open")) return;
+    selected = -1; tool = null; $("detail").classList.remove("open"); scheduleHash(); draw();
+  }
+
+  // ------------------------------------------------------------- search
+  const q = $("q"), qres = $("qres"); let qItems = [], qActive = 0, folded, foldedOrig;
+  q.addEventListener("input", () => {
+    const t = fold(q.value.trim()); if (!t) return closeResults();
+    folded ||= S.name.map(fold); foldedOrig ||= S.on.map((o) => (o ? fold(o) : ""));
+    const starts = [], contains = [];
+    for (let i = 0; i < N && starts.length < 8; i++) {
+      const p = folded[i].indexOf(t), o = foldedOrig[i] ? foldedOrig[i].indexOf(t) : -1;
+      if (p === 0 || o === 0) starts.push(i); else if ((p > 0 || o > 0) && contains.length < 8) contains.push(i);
+    }
+    qItems = starts.concat(contains).slice(0, 8); qActive = 0; renderResults();
+  });
+  q.addEventListener("keydown", (e) => {
+    if (!qItems.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); qActive = (qActive + 1) % qItems.length; renderResults(); }
+    if (e.key === "ArrowUp") { e.preventDefault(); qActive = (qActive - 1 + qItems.length) % qItems.length; renderResults(); }
+    if (e.key === "Enter") { e.preventDefault(); pick(qItems[qActive]); }
+  });
+  function renderResults() {
+    qres.innerHTML = qItems.length ? qItems.map((i, k) =>
+      `<button data-i="${i}" class="${k === qActive ? "active" : ""}"><span>${esc(S.name[i])}${S.on[i] ? ` <small>${esc(S.on[i])}</small>` : ""}</span><small>${S.y0[i] || ""}</small></button>`).join("")
+      : `<button disabled><span style="color:var(--muted)">No matches</span></button>`;
+    qres.classList.add("open");
+    qres.querySelectorAll("button[data-i]").forEach((b) => (b.onmousedown = (e) => { e.preventDefault(); pick(+b.dataset.i); }));
+  }
+  function pick(i) { closeResults(); q.value = S.name[i]; q.blur(); select(i, true); }
+  function closeResults() { qres.classList.remove("open"); kwres.classList.remove("open"); qItems = []; }
+  q.addEventListener("blur", () => setTimeout(() => qres.classList.remove("open"), 120));
+
+  // ------------------------------------------------------------ filters
+  const kw = $("kw"), kwres = $("kwres");
+  function buildFilterUI() {
+    $("genreChips").innerHTML = D.genres.map((g, i) => `<button class="chip" data-g="${i}">${esc(g)}</button>`).join("");
+    $("typeChips").innerHTML = D.types.map((t, i) => `<button class="chip" data-t="${i}">${esc(t)}</button>`).join("");
+    $("genreChips").onclick = (e) => { const b = e.target.closest("[data-g]"); if (!b) return; toggle(F.genres, +b.dataset.g); };
+    $("typeChips").onclick = (e) => { const b = e.target.closest("[data-t]"); if (!b) return; toggle(F.types, +b.dataset.t); };
+    $("kwChips").onclick = (e) => { const b = e.target.closest("[data-k]"); if (!b) return; F.kws.delete(+b.dataset.k); syncChips(); applyFilters(); };
+
+    const count = (col) => { const c = new Map(); for (const v of col) c.set(v, (c.get(v) || 0) + 1); return c; };
+    const lc = count(S.lang), nc = new Map(); S.net.forEach((a) => a.forEach((v) => nc.set(v, (nc.get(v) || 0) + 1)));
+    $("fLang").innerHTML = `<option value="-1">All languages</option>` + D.languages.map((l, i) => [l, i]).filter(([, i]) => lc.get(i))
+      .map(([l, i]) => `<option value="${i}">${esc(langName(l))} (${lc.get(i)})</option>`).join("");
+    $("fNet").innerHTML = `<option value="-1">All networks</option>` + D.networks.map((n, i) => [n, i]).filter(([, i]) => nc.get(i) >= 3)
+      .map(([n, i]) => `<option value="${i}">${esc(n)} (${nc.get(i)})</option>`).join("");
+    $("fStatus").innerHTML = `<option value="-1">Any status</option>` + D.statuses.map((s, i) => `<option value="${i}">${esc(s)}</option>`).join("");
+    const oc = new Map(); S.oc.forEach((a) => a.forEach((v) => oc.set(v, (oc.get(v) || 0) + 1)));
+    $("fOrigin").innerHTML = `<option value="-1">Any origin</option>` + D.countries.map((c, i) => [regionName(c), i])
+      .filter(([, i]) => oc.get(i)).sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([n, i]) => `<option value="${i}">${esc(n)} (${oc.get(i)})</option>`).join("");
+    buildEra();
+    for (const [id, key] of [["fLang", "lang"], ["fNet", "net"], ["fStatus", "status"], ["fRating", "rating"], ["fVotes", "votes"], ["fOrigin", "origin"]])
+      $(id).onchange = (e) => { F[key] = +e.target.value; applyFilters(); };
+    $("sizeSeg").onclick = (e) => { const b = e.target.closest("[data-size]"); if (b) setSize(b.dataset.size); };
+    $("themeSeg").onclick = (e) => { const b = e.target.closest("[data-theme]"); if (b) setTheme(b.dataset.theme); };
+    setSize(sizeBy, false); setTheme(theme, false);
+    $("mAny").onclick = () => setMode("any"); $("mAll").onclick = () => setMode("all");
+    $("hourChips").innerHTML = BUCKETS.map((b, i) => `<button class="chip" data-h="${i}">${b[0]} <small style="opacity:.7">${b[1]}</small></button>`).join("");
+    $("hourChips").onclick = (e) => { const b = e.target.closest("[data-h]"); if (!b) return; toggle(F.hours, +b.dataset.h); };
+    $("fCountry").onchange = (e) => setCountry(e.target.value);
+    $("svcChips").onclick = (e) => {
+      const b = e.target.closest("[data-svc]"); if (!b) return;
+      const id = +b.dataset.svc; services.has(id) ? services.delete(id) : services.add(id);
+      store.set("services", [...services]); renderServiceChips(); rebuildSvcOK();
+      if (!F.mine && services.size) { F.mine = true; $("fMine").checked = true; }
+      applyFilters();
+    };
+    $("fMine").onchange = (e) => {
+      F.mine = e.target.checked;
+      if (F.mine && !services.size) toast("Tick the services you subscribe to first.");
+      applyFilters();
+    };
+    $("listSeg").onclick = (e) => { const b = e.target.closest("[data-l]"); if (!b) return; F.list = b.dataset.l; syncChips(); applyFilters(); };
+    $("exportBtn").onclick = exportLists;
+    $("importBtn").onclick = () => $("importFile").click();
+    $("importFile").onchange = importLists;
+    $("surpriseBtn").onclick = surprise;
+    $("clearBtn").onclick = clearFilters;
+    applyFilters();
+  }
+  $("filtersBtn").onclick = () => {
+    const open = $("filters").classList.toggle("open"); $("filtersBtn").classList.toggle("on", open);
+    if (open && innerWidth <= 720) $("detail").classList.remove("open");
+  };
+  // ---- era slider: F.from / F.to are first-air years, 0 = open-ended
+  let eraMin = 1940, eraMax = 2030;
+  function buildEra() {
+    const years = S.y0.filter(Boolean);
+    eraMin = Math.max(1940, years.length ? Math.min(...years) : 1940);
+    eraMax = Math.max(eraMin + 1, years.length ? Math.max(...years) : new Date().getFullYear());
+    for (const id of ["eraFrom", "eraTo"]) Object.assign($(id), { min: eraMin, max: eraMax, step: 1 });
+    const onInput = (which) => () => {
+      let a = +$("eraFrom").value, b = +$("eraTo").value;
+      if (a > b) which === "from" ? ($("eraTo").value = b = a) : ($("eraFrom").value = a = b);
+      F.from = a > eraMin ? a : 0; F.to = b < eraMax ? b : 0;
+      syncEra(); applyFilters();
+    };
+    $("eraFrom").oninput = onInput("from"); $("eraTo").oninput = onInput("to");
+    syncEra();
+  }
+  function syncEra() {
+    const a = F.from ? Math.max(eraMin, Math.min(eraMax, F.from)) : eraMin, b = F.to ? Math.max(eraMin, Math.min(eraMax, F.to)) : eraMax;
+    $("eraFrom").value = a; $("eraTo").value = b;
+    const pct = (v) => ((v - eraMin) / (eraMax - eraMin)) * 100;
+    $("eraFill").style.left = pct(a) + "%"; $("eraFill").style.right = 100 - pct(b) + "%";
+    $("eraFrom").style.zIndex = a > (eraMin + eraMax) / 2 ? 2 : 1;  // keep both thumbs reachable when they meet
+    $("eraLabel").textContent = !F.from && !F.to ? "Any year" : !F.to ? `${a} onward` : !F.from ? `Up to ${b}` : a === b ? `${a}` : `${a} – ${b}`;
+  }
+  function toggle(set, v) { set.has(v) ? set.delete(v) : set.add(v); syncChips(); applyFilters(); }
+  function setMode(m) { F.mode = m; $("mAny").classList.toggle("on", m === "any"); $("mAll").classList.toggle("on", m === "all"); applyFilters(); }
+  function syncChips() {
+    document.querySelectorAll("#genreChips [data-g]").forEach((b) => b.classList.toggle("on", F.genres.has(+b.dataset.g)));
+    document.querySelectorAll("#typeChips [data-t]").forEach((b) => b.classList.toggle("on", F.types.has(+b.dataset.t)));
+    document.querySelectorAll("#hourChips [data-h]").forEach((b) => b.classList.toggle("on", F.hours.has(+b.dataset.h)));
+    document.querySelectorAll("#listSeg [data-l]").forEach((b) => b.classList.toggle("on", F.list === b.dataset.l));
+    $("kwChips").innerHTML = [...F.kws].map((k) => `<button class="chip on" data-k="${k}">${esc(D.keywords[k])}<span class="x">×</span></button>`).join("");
+  }
+  function clearFilters() {
+    Object.assign(F, { genres: new Set(), types: new Set(), kws: new Set(), lang: -1, net: -1, status: -1, rating: 0, from: 0, to: 0,
+                       votes: 0, origin: -1, region: 0, hours: new Set(), mine: false, list: "all" });
+    $("fMine").checked = false;
+    for (const id of ["fLang", "fNet", "fStatus", "fOrigin"]) $(id).value = "-1";
+    for (const id of ["fRating", "fVotes"]) $(id).value = "0";
+    syncEra();
+    syncChips(); applyFilters();
+  }
+  kw.addEventListener("input", () => {
+    const t = fold(kw.value.trim()); if (!t) return kwres.classList.remove("open");
+    const hits = []; for (let k = 0; k < D.keywords.length && hits.length < 8; k++) if (!F.kws.has(k) && fold(D.keywords[k]).includes(t)) hits.push(k);
+    kwres.innerHTML = hits.length ? hits.map((k) => `<button data-k="${k}"><span>${esc(D.keywords[k])}</span></button>`).join("") : `<button disabled><span style="color:var(--muted)">No keyword matches</span></button>`;
+    kwres.classList.add("open");
+    kwres.querySelectorAll("[data-k]").forEach((b) => (b.onmousedown = (e) => { e.preventDefault(); addKw(+b.dataset.k); }));
+  });
+  kw.addEventListener("keydown", (e) => { if (e.key === "Enter") { const b = kwres.querySelector("[data-k]"); if (b) addKw(+b.dataset.k); } });
+  kw.addEventListener("blur", () => setTimeout(() => kwres.classList.remove("open"), 120));
+  function addKw(k) { F.kws.add(k); kw.value = ""; kwres.classList.remove("open"); syncChips(); applyFilters(); }
+
+  function applyFilters() {
+    const tags = F.genres.size + F.types.size + F.kws.size;
+    const narrow = (F.lang >= 0) + (F.net >= 0) + (F.status >= 0) + (F.rating > 0) + (F.from > 0 || F.to > 0)
+      + (F.votes > 0) + (F.origin >= 0) + (F.region > 0)
+      + (F.hours.size > 0) + F.mine + (F.list !== "all");
+    const active = tags + narrow;
+    const rf = $("regionFilter"), rc = F.region ? clusterByKey(F.region) : -1;
+    rf.hidden = rc < 0;
+    if (rc >= 0) { rf.innerHTML = `Region: <b>${esc(D.clusters[rc].label)}</b> · <button class="link" id="regionOff">remove</button>`;
+                   $("regionOff").onclick = () => { F.region = 0; applyFilters(); if (tool && tool.kind === "region") showTool(); }; }
+    const regionKey = F.region ? D.clusters.map((k) => k.key) : null;
+    $("fbadge").hidden = !active; $("fbadge").textContent = active;
+    if (!active) { match = null; $("matchCount").textContent = `Showing all ${N.toLocaleString()} shows`; draw(); scheduleHash(); return; }
+    let gmask = 0; for (const g of F.genres) gmask |= 1 << g;
+    const kws = [...F.kws], types = F.types;
+    match = new Uint8Array(N); let c = 0;
+    for (let i = 0; i < N; i++) {
+      if (F.lang >= 0 && S.lang[i] !== F.lang) continue;
+      if (F.net >= 0 && !S.net[i].includes(F.net)) continue;
+      if (F.status >= 0 && S.st[i] !== F.status) continue;
+      if (F.rating && S.va[i] < F.rating) continue;
+      if (F.votes && S.vc[i] < F.votes) continue;
+      if (regionKey && regionKey[S.cl[i]] !== F.region) continue;
+      if (F.origin >= 0 && !S.oc[i].includes(F.origin)) continue;
+      if (F.from && (!S.y0[i] || S.y0[i] < F.from)) continue;
+      if (F.to && (!S.y0[i] || S.y0[i] > F.to)) continue;
+      if (F.hours.size) {
+        const h = S.h[i]; let ok = false;
+        if (h > 0) for (const b of F.hours) if (h >= BUCKETS[b][2] && h < BUCKETS[b][3]) { ok = true; break; }
+        if (!ok) continue;
+      }
+      if (F.mine && !(svcOK && svcOK[i])) continue;
+      if (F.list === "hide" && markArr[i] === 1) continue;
+      if (F.list === "only" && markArr[i] !== 2) continue;
+      if (tags) {
+        let ok;
+        if (F.mode === "any") {
+          ok = (S.g[i] & gmask) !== 0 || types.has(S.t[i]) || kws.some((k) => S.kw[i].includes(k));
+        } else {
+          ok = (S.g[i] & gmask) === gmask && (types.size === 0 || types.has(S.t[i])) && kws.every((k) => S.kw[i].includes(k));
+        }
+        if (!ok) continue;
+      }
+      match[i] = 1; c++;
+    }
+    $("matchCount").textContent = `${c.toLocaleString()} of ${N.toLocaleString()} shows match`;
+    draw(); scheduleHash();
+  }
+
+  // ------------------------------------------------------------- helpers
+  function hoursText(h) {
+    if (h < 1.5) return Math.max(1, Math.round(h * 60 / 10) * 10) + " minutes";
+    return (h < 10 ? Math.round(h * 2) / 2 : Math.round(h)) + " hours";
+  }
+  let toastTimer = 0;
+  function toast(msg) {
+    const t = $("toast"); t.textContent = msg; t.classList.add("open");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("open"), 3500);
+  }
+  function inViewBounds() {
+    return [-view.x / view.s, -view.y / view.s, (W - view.x) / view.s, (H - view.y) / view.s];
+  }
+
+  // ----------------------------------------------------- watched / watchlist
+  function rebuildMarks() {
+    markArr = new Uint8Array(N); listIdx = [];
+    for (const [id, k] of Object.entries(marks)) {
+      const i = byId.get(+id); if (i == null) continue;
+      markArr[i] = k === "w" ? 1 : 2; if (k === "l") listIdx.push(i);
+    }
+    const vals = Object.values(marks), w = vals.filter((v) => v === "w").length;
+    if ($("listCounts")) $("listCounts").textContent = `${w} watched, ${vals.length - w} on watchlist`;
+  }
+  function setMark(id, kind) {
+    if (marks[id] === kind) delete marks[id]; else marks[id] = kind;
+    store.set("marks", marks); rebuildMarks(); applyFilters();
+  }
+  function exportLists() {
+    const watched = [], watchlist = [];
+    for (const [id, k] of Object.entries(marks)) (k === "w" ? watched : watchlist).push(+id);
+    const body = { app: "couch-cartography", version: 2, exported: new Date().toISOString(), watched, watchlist, ratings };
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(body, null, 2)], { type: "application/json" }));
+    a.download = "couch-cartography-lists.json"; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  async function importLists(e) {
+    const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+    try {
+      const j = JSON.parse(await f.text()); let n = 0;
+      if (!Array.isArray(j.watched) && !Array.isArray(j.watchlist)) throw new Error("bad file");
+      for (const id of j.watched || []) if (Number.isInteger(id)) { marks[id] = "w"; n++; }
+      for (const id of j.watchlist || []) if (Number.isInteger(id) && marks[id] !== "w") { marks[id] = "l"; n++; }
+      for (const [id, r] of Object.entries(j.ratings || {})) if (/^\d+$/.test(id) && Number.isInteger(r) && r >= 1 && r <= 10) ratings[id] = r;
+      store.set("ratings", ratings);
+      store.set("marks", marks); rebuildMarks(); applyFilters();
+      if (selected >= 0) select(selected, false);
+      toast(`Imported ${n} show${n === 1 ? "" : "s"}.`);
+    } catch { toast("That file isn't a Couch Cartography export."); }
+  }
+
+  // --------------------------------------------------------- where to watch
+  async function loadProviderIndex() {
+    try { const r = await fetch("data/providers/index.json"); PI = r.ok ? await r.json() : { countries: {}, providers: {} }; }
+    catch { PI = { countries: {}, providers: {} }; }
+    const ccs = Object.keys(PI.countries).sort((a, b) => regionName(a).localeCompare(regionName(b)));
+    if (!ccs.includes(country)) ccs.unshift(country);
+    $("fCountry").innerHTML = ccs.map((c) => `<option value="${c}">${esc(regionName(c))}</option>`).join("");
+    $("fCountry").value = country;
+    await setCountry(country, false);
+  }
+  async function loadCountry(cc) {
+    if (!provCache.has(cc)) {
+      let data = { top: [], shows: {} };
+      if (PI && PI.countries[cc]) {
+        try { const r = await fetch(`data/providers/${cc}.json`); if (r.ok) data = await r.json(); } catch {}
+      }
+      provCache.set(cc, data);
+    }
+    return provCache.get(cc);
+  }
+  async function setCountry(cc, persist = true) {
+    country = cc; if (persist) store.set("country", cc);
+    $("fCountry").value = cc;
+    await loadCountry(cc);
+    if (country !== cc) return;  // changed again while loading
+    renderServiceChips(); rebuildSvcOK(); applyFilters();
+    const box = $("wtw"); if (box && selected >= 0) { box.innerHTML = wtwHTML(selected); bindWtw(); }
+  }
+  function renderServiceChips() {
+    const data = provCache.get(country); if (!data || !PI) return;
+    const ids = data.top.slice(0, 24);
+    for (const id of services) if (!ids.includes(id) && data.top.includes(id)) ids.push(id);
+    $("svcChips").innerHTML = ids.length ? ids.map((id) => {
+      const [name, logo] = PI.providers[id] || ["Provider " + id, ""];
+      return `<button class="chip svc ${services.has(id) ? "on" : ""}" data-svc="${id}">${logo ? `<img src="${esc(logoURL(logo))}" alt="" loading="lazy">` : ""}${esc(name)}</button>`;
+    }).join("") : `<span class="hint-sm">No streaming data for ${esc(regionName(country))}.</span>`;
+  }
+  function rebuildSvcOK() {
+    const data = provCache.get(country); svcOK = new Uint8Array(N);
+    if (!data) return;
+    for (const [id, o] of Object.entries(data.shows)) {
+      const i = byId.get(+id); if (i == null) continue;
+      if ((o.s || []).some((p) => services.has(p)) || (o.f || []).some((p) => services.has(p))) svcOK[i] = 1;
+    }
+  }
+  function wtwHTML(i) {
+    const data = provCache.get(country);
+    const ccs = PI ? Object.keys(PI.countries) : [];
+    if (!ccs.includes(country)) ccs.push(country);
+    ccs.sort((a, b) => regionName(a).localeCompare(regionName(b)));
+    const picker = `<select id="dCountry" aria-label="Country">${ccs.map((c) => `<option value="${c}" ${c === country ? "selected" : ""}>${esc(regionName(c))}</option>`).join("")}</select>`;
+    let body;
+    if (!data) body = `<div class="hint-sm">Loading…</div>`;
+    else {
+      const o = data.shows[S.id[i]];
+      const d = curDetail, place = esc(regionName(country));
+      const search = `https://www.justwatch.com/${country.toLowerCase()}/search?q=${encodeURIComponent(S.name[i])}`;
+      if (!o && d.wc) body = `<div class="hint-sm">Not on any service in ${place} right now. It is available in ${d.wc} other ${d.wc === 1 ? "country" : "countries"}; pick one above to see where.</div>`;
+      else if (!o) body = `<div class="hint-sm">No where-to-watch data for this show yet. <a href="${esc(search)}" target="_blank" rel="noopener" style="color:var(--accent)">Search JustWatch ↗</a></div>`;
+      else {
+        const row = (key, label) => (o[key] || []).length ? `<dt>${label}</dt><dd>${o[key].map((p) => {
+          const [name, logo] = PI.providers[p] || ["Provider " + p, ""];
+          return `<span class="${services.has(p) ? "mine" : ""}" title="${esc(name)}">${logo ? `<img src="${esc(logoURL(logo))}" alt="">` : ""}${esc(name)}</span>`;
+        }).join("")}</dd>` : "";
+        body = `<dl class="prov">${row("s", "Stream")}${row("f", "Free")}${row("r", "Rent")}${row("b", "Buy")}</dl>`;
+      }
+    }
+    return `<section><div class="wtw-head"><h4>Where to watch</h4>${picker}</div>${body}
+      <div class="jw">${jwCredit(i)}</div></section>`;
+  }
+  function jwCredit(i) {
+    const d = curDetail, link = (href, text) => `<a href="${esc(href)}" target="_blank" rel="noopener" style="color:var(--muted)">${text}</a>`;
+    const via = d.ws === "t" ? " via TMDB" : "";
+    const more = d.jw && /^https:\/\/(www\.)?justwatch\.com\//.test(d.jw) ? link(d.jw, "JustWatch page ↗")
+      : link(`https://www.themoviedb.org/tv/${S.id[i]}/watch?locale=${country}`, "All options ↗");
+    return `Availability by ${link("https://www.justwatch.com/", "JustWatch")}${via} · ${more}`;
+  }
+  function bindWtw() { const sel = $("dCountry"); if (sel) sel.onchange = (e) => setCountry(e.target.value); }
+
+  // ------------------------------------------------------------ surprise me
+  function surprise() {
+    if (!D) return;
+    const [x0, y0, x1, y1] = inViewBounds(), inView = [];
+    for (let i = 0; i < N; i++) {
+      if (match && !match[i]) continue;
+      if (markArr[i] === 1 || i === selected) continue;
+      const x = S.x[i], y = S.y[i];
+      if (x >= x0 && x <= x1 && y >= y0 && y <= y1) inView.push(i);
+    }
+    let pool = inView.filter((i) => S.va[i] >= 7 && S.vc[i] >= 50);
+    if (!pool.length) pool = inView.filter((i) => S.va[i] >= 6.5);
+    if (!pool.length) pool = inView;
+    if (!pool.length) return toast("Nothing in view matches your filters. Zoom out or clear a filter.");
+    select(pool[Math.floor(Math.random() * pool.length)], true);
+  }
+
+  // =================================================== exploration tools
+  // tool: what the side panel shows when no single show is open
+  //   {kind: "region", c} | {kind: "bridge", a, b, path, sims} | {kind: "compare", a, b, da, db, score}
+  let tool = null, pickMode = null, labelHits = [];
+  const pct = (v) => Math.round(v * 100) + "%";
+  // raw cosine runs high (two random shows already share a lot); rescale so a
+  // typical random pair is 0% and only near-identical shows reach 99%
+  const alike = (c) => { const base = (D.vectors && D.vectors.base) || 0; return Math.max(0, Math.min(0.99, (c - base) / (1 - base))); };
+  const THE = new Set(["US", "GB", "NL", "PH", "AE", "CZ", "DO", "CD", "BS", "GM"]);
+  const place = (cc) => (THE.has(cc) ? "the " : "") + regionName(cc);
+  const andList = (a) => (a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " and " + a[a.length - 1]);
+  const clusterByKey = (key) => D.clusters.findIndex((k) => k.key === key);
+
+  // ---- binary data, loaded on first use
+  let graphP = null, vecP = null;
+  function loadGraph() {
+    if (!D.graph) return Promise.reject(new Error("old data"));
+    return (graphP ||= fetch("data/graph.bin").then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then((buf) => {
+      const K = D.graph.k, wide = D.graph.idx === "u32";
+      const idx = wide ? new Uint32Array(buf, 0, N * K) : new Uint16Array(buf, 0, N * K);
+      const sim = new Uint8Array(buf, N * K * (wide ? 4 : 2), N * K);
+      // undirected adjacency (CSR): "A lists B as similar" links both ways
+      const deg = new Uint32Array(N + 1);
+      for (let e = 0; e < N * K; e++) { deg[Math.floor(e / K)]++; deg[idx[e]]++; }
+      const off = new Uint32Array(N + 1); for (let i = 0; i < N; i++) off[i + 1] = off[i] + deg[i];
+      const fill = off.slice(0, N), nb = new Uint32Array(off[N]), w = new Float32Array(off[N]);
+      for (let e = 0; e < N * K; e++) {
+        const i = Math.floor(e / K), j = idx[e], s = sim[e] / 255;
+        nb[fill[i]] = j; w[fill[i]++] = s; nb[fill[j]] = i; w[fill[j]++] = s;
+      }
+      return { off, nb, w };
+    }));
+  }
+  function loadVectors() {
+    if (!D.vectors) return Promise.reject(new Error("old data"));
+    return (vecP ||= fetch("data/vectors.bin").then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+      .then((buf) => new Int8Array(buf)));
+  }
+  function cosine(V, a, b) {
+    const d = D.vectors.dims; let ab = 0, aa = 0, bb = 0;
+    for (let t = 0; t < d; t++) { const x = V[a * d + t], y = V[b * d + t]; ab += x * y; aa += x * x; bb += y * y; }
+    return aa && bb ? ab / Math.sqrt(aa * bb) : 0;
+  }
+
+  // ---- shortest chain of similar shows (Dijkstra; each hop costs a little,
+  //      weak similarities cost more, so chains stay short and smooth)
+  function shortestPath(G, a, b) {
+    const dist = new Float64Array(N).fill(Infinity), prev = new Int32Array(N).fill(-1), via = new Float32Array(N);
+    const heap = [[0, a]]; dist[a] = 0;
+    const push = (x) => { heap.push(x); let k = heap.length - 1; while (k) { const p = (k - 1) >> 1; if (heap[p][0] <= heap[k][0]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; k = p; } };
+    const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let k = 0;
+      for (;;) { const l = 2 * k + 1, r = l + 1; let m = k; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+        if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; k = m; } } return top; };
+    while (heap.length) {
+      const [d, i] = pop(); if (d > dist[i]) continue; if (i === b) break;
+      for (let e = G.off[i]; e < G.off[i + 1]; e++) {
+        const j = G.nb[e], nd = d + 0.15 + (1 - G.w[e]);
+        if (nd < dist[j]) { dist[j] = nd; prev[j] = i; via[j] = G.w[e]; push([nd, j]); }
+      }
+    }
+    if (prev[b] < 0 && a !== b) return null;
+    const path = [], sims = []; for (let i = b; i !== -1; i = prev[i]) { path.push(i); sims.push(via[i]); }
+    return { path: path.reverse(), sims: sims.reverse() };
+  }
+
+  // ---- picking the second show for bridge / compare
+  function startPick(kind, from) {
+    pickMode = { kind, from };
+    const bar = $("pickBar");
+    bar.innerHTML = `<span>${kind === "bridge" ? "Bridge from" : "Compare"} <b>${esc(S.name[from])}</b> ${kind === "bridge" ? "to" : "with"}…
+      click a show or search for one.</span><button class="link" id="pickCancel">Cancel</button>`;
+    bar.hidden = false; $("pickCancel").onclick = endPick;
+    if (innerWidth <= 720) $("detail").classList.remove("open");
+    $("q").focus();
+  }
+  function endPick() { pickMode = null; $("pickBar").hidden = true; }
+
+  // ---- open a tool view
+  function openRegion(c) { selected = -1; tool = { kind: "region", c }; showTool(); scheduleHash(); draw(); }
+  async function runBridge(a, b, fit = true) {
+    selected = -1; tool = { kind: "bridge", a, b }; showTool(); draw();
+    const me = tool;
+    try {
+      const r = shortestPath(await loadGraph(), a, b);
+      if (tool !== me) return;
+      Object.assign(me, r ? { path: r.path, sims: r.sims } : { path: [], sims: [] });
+    } catch { if (tool === me) me.error = true; }
+    if (tool !== me) return;
+    if (selected < 0) showTool();  // a show opened meanwhile keeps the panel
+    scheduleHash(); draw();
+    if (fit && me.path && me.path.length) fitTo(me.path);
+  }
+  async function runCompare(a, b, fit = true) {
+    selected = -1; tool = { kind: "compare", a, b }; showTool(); draw();
+    const me = tool;
+    const [da, db] = await Promise.all([getDetail(S.id[a]), getDetail(S.id[b])]);
+    let score = null; try { score = cosine(await loadVectors(), a, b); } catch {}
+    if (tool !== me) return;
+    Object.assign(me, { da: da || {}, db: db || {}, score });
+    if (selected < 0) showTool();
+    scheduleHash(); draw();
+    if (fit) fitTo([a, b]);
+  }
+  function fitTo(list) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const i of list) { x0 = Math.min(x0, S.x[i]); x1 = Math.max(x1, S.x[i]); y0 = Math.min(y0, S.y[i]); y1 = Math.max(y1, S.y[i]); }
+    const side = innerWidth > 720 && $("detail").classList.contains("open") ? 410 : 0;
+    const aw = W - side - 80, ah = (innerWidth > 720 ? H : H * 0.5) - 140;
+    const s = Math.max(minScale, Math.min(minScale * 12, aw / Math.max(20, x1 - x0), ah / Math.max(20, y1 - y0)));
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    animateTo({ s, x: (W - side) / 2 - cx * s, y: (innerWidth > 720 ? H / 2 + 20 : H * 0.3) - cy * s });
+  }
+
+  function showTool() {
+    if (!tool) return;
+    const box = $("detail"); box.classList.add("open");
+    if (innerWidth <= 720) $("filters").classList.remove("open"), $("filtersBtn").classList.remove("on");
+    const html = { region: () => regionHTML(tool.c), bridge: () => bridgeHTML(tool), compare: () => compareHTML(tool),
+                   import: () => importHTML(tool), foryou: () => forYouHTML(tool), coverage: () => coverageHTML(tool) }[tool.kind]();
+    box.innerHTML = `<button class="close" aria-label="Close">×</button>${html}`;
+    box.querySelector(".close").onclick = () => closeDetail();
+    box.querySelectorAll("[data-i]").forEach((b) => (b.onclick = () => select(+b.dataset.i, true)));
+    box.querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => toolAction(b.dataset.act)));
+    box.querySelectorAll("[data-region]").forEach((b) => (b.onclick = () => openRegion(+b.dataset.region)));
+    bindImport();
+    box.scrollTop = 0;
+  }
+  function toolAction(act) {
+    const t = tool; if (!t) return;
+    if (act === "clear") return closeDetail();
+    if (act === "swap") return t.kind === "bridge" ? runBridge(t.b, t.a, false) : runCompare(t.b, t.a, false);
+    if (act === "bridge") return runBridge(t.a, t.b);
+    if (act === "compare") return runCompare(t.a, t.b);
+    if (act === "zoom") return fitTo(membersOf(t.c));
+    if (act === "onmap") { t.onMap = !t.onMap; showTool(); return draw(); }
+    if (act === "coverage") return openCoverage();
+    if (act === "foryou") return openForYou();
+    if (act === "history") return $("historyFile").click();
+    if (act === "highlight") {
+      const key = D.clusters[t.c].key; F.region = F.region === key ? 0 : key; applyFilters(); showTool();
+    }
+  }
+  function membersOf(c) { const m = []; for (let i = 0; i < N; i++) if (S.cl[i] === c) m.push(i); return m; }
+  const showBtn = (i, extra = "") => `<button data-i="${i}"><span class="dot" style="background:${S.col[i]}"></span>${esc(S.name[i])}<small>${S.y0[i] || ""}${extra}</small></button>`;
+
+  // ---- region guide
+  function autoBlurb(k) {
+    const g = k.genres.filter(([, s]) => s >= 0.35).map(([n]) => n.toLowerCase().replace(/ & /g, " and "));
+    let t = (g.length ? andList(g.slice(0, 3)) : "assorted") + " shows";
+    t = t[0].toUpperCase() + t.slice(1);
+    const [c1, s1] = k.countries[0] || [], [l1, ls] = k.langs[0] || [];
+    if (c1 && s1 >= 0.5) t += `, mostly from ${place(c1)}`;
+    else if (k.countries.length >= 2) t += ` from ${place(k.countries[0][0])}, ${place(k.countries[1][0])} and elsewhere`;
+    if (l1 && l1 !== "en" && ls >= 0.5 && !(c1 && s1 >= 0.5)) t += `, mostly in ${langName(l1)}`;
+    if (k.years.length) t += k.years[0] === k.years[2] ? `, first aired around ${k.years[1]}` : `, most first aired ${k.years[0]}–${k.years[2]}`;
+    const [n1, ns] = k.networks[0] || [];
+    if (n1 && ns >= 0.25) t += `; many are on ${n1}`;
+    return t + ".";
+  }
+  function regionHTML(c) {
+    const k = D.clusters[c];
+    const stat = (arr, fmt) => arr.filter(([, s]) => s >= 0.05).map(([v, s]) => `<span>${esc(fmt(v))}<small>${pct(s)}</small></span>`).join("");
+    const top = (k.top || []).map((id) => byId.get(id)).filter((i) => i != null);
+    const rows = [["Genres", stat(k.genres || [], (v) => v)], ["Networks", stat(k.networks || [], (v) => v)],
+                  ["Countries", stat(k.countries || [], regionName)], ["Languages", stat(k.langs || [], langName)]].filter((r) => r[1]);
+    const on = F.region === k.key;
+    return `<div class="tool-pad">
+        <div class="tool-kicker">Region guide</div>
+        <div class="tool-title">${esc(k.label)}</div>
+        <div class="sub" style="color:var(--muted);font-size:13px">${k.size.toLocaleString()} shows${k.label !== k.auto ? ` · ${esc(k.auto)}` : ""}</div>
+        <p class="blurb" style="margin:10px 0 0">${esc(k.blurb || autoBlurb(k))}</p>
+      </div>
+      <section class="tool-actions"><button class="btn ${on ? "on" : ""}" data-act="highlight">${on ? "✓ Highlighted" : "Highlight region"}</button>
+        <button class="btn" data-act="zoom">Zoom to region</button></section>
+      ${top.length ? `<section><h4>Best known</h4><div class="sim">${top.map((i) => showBtn(i)).join("")}</div></section>` : ""}
+      ${rows.map(([h, v]) => `<section><h4>${h}</h4><div class="stats">${v}</div></section>`).join("")}
+      ${k.years && k.years.length ? `<section><h4>First aired</h4><div style="font-size:13px">Most between ${k.years[0]} and ${k.years[2]}, typically around ${k.years[1]}</div></section>` : ""}
+      <section class="hint-sm">Region #${k.key}${k.blurb ? "" : " · description written automatically from its shows"}</section>`;
+  }
+
+  // ---- bridge
+  function bridgeHTML(t) {
+    const head = `<div class="tool-pad"><div class="tool-kicker">Bridge</div>
+      <div class="tool-title">${esc(S.name[t.a])} → ${esc(S.name[t.b])}</div>`;
+    if (t.error) return head + `<p>Couldn't load the similarity graph. The map data may need rebuilding.</p></div>`;
+    if (!t.path) return head + `<div class="sub" style="color:var(--muted)">Finding the chain…</div></div>`;
+    if (!t.path.length) return head + `<p>No chain of similar shows links these two. They sit in parts of the map that don't connect.</p></div>
+      <section class="tool-actions"><button class="btn" data-act="compare">Compare them instead</button><button class="btn" data-act="clear">Clear</button></section>`;
+    const steps = t.path.length - 2;
+    const list = t.path.map((i, k) => `<button data-i="${i}" class="${k === 0 || k === t.path.length - 1 ? "end" : ""}">
+        <span class="n">${k + 1}</span><span class="dot" style="background:${S.col[i]}"></span><span>${esc(S.name[i])}</span>
+        <small>${k ? pct(alike(t.sims[k])) + " alike" : (S.y0[i] || "")}</small></button>`).join("");
+    return head + `<div class="sub" style="color:var(--muted);font-size:13px">${steps ? `${steps} show${steps > 1 ? "s" : ""} in between` : "They're direct neighbours"} · each step is a close match</div></div>
+      <section><div class="path">${list}</div></section>
+      <section class="tool-actions"><button class="btn" data-act="swap">⇅ Reverse</button><button class="btn" data-act="compare">Compare the ends</button><button class="btn" data-act="clear">Clear</button></section>`;
+  }
+
+  // ---- compare
+  function compareHTML(t) {
+    const head = `<div class="tool-pad"><div class="tool-kicker">Compare</div>
+      <div class="vs"><button data-i="${t.a}">${esc(S.name[t.a])}</button><span>&amp;</span><button data-i="${t.b}">${esc(S.name[t.b])}</button></div>`;
+    if (!t.da) return head + `<div class="sub" style="color:var(--muted);margin-top:8px">Loading…</div></div>`;
+    const A = t.da, B = t.db, low = (x) => String(x).toLowerCase();
+    const both = (x, y) => { const s = new Set((y || []).map(low)); return (x || []).filter((v) => s.has(low(v))); };
+    const only = (x, y) => { const s = new Set((y || []).map(low)); return (x || []).filter((v) => !s.has(low(v))); };
+    const decade = (d) => (d && d.fa ? Math.floor(+d.fa.slice(0, 4) / 10) * 10 + "s" : "");
+    const la = D.languages[S.lang[t.a]], lb = D.languages[S.lang[t.b]];
+    const shared = [
+      ["Genres", both(A.g, B.g)], ["Keywords", both(A.kw, B.kw)], ["Created by", both(A.cr, B.cr)],
+      ["Cast", both(A.ca, B.ca)], ["Networks", both(A.n, B.n)], ["Country", both(A.oc, B.oc).map(regionName)],
+      ["Language", la && la === lb ? [langName(la)] : []], ["Era", decade(A) && decade(A) === decade(B) ? [decade(A)] : []],
+    ].filter(([, v]) => v.length);
+    const chips = (v, cls = "") => `<div class="stats">${v.map((x) => `<span class="${cls}">${esc(x)}</span>`).join("")}</div>`;
+    const sc = t.score == null ? null : alike(t.score);
+    const rankA = (A.sim || []).indexOf(S.id[t.b]), rankB = (B.sim || []).indexOf(S.id[t.a]);
+    const poss = (n) => esc(n) + (/s$/i.test(n) ? "'" : "'s");
+    const rank = rankA >= 0 ? `#${rankA + 1} on ${poss(S.name[t.a])} similar list` : rankB >= 0 ? `#${rankB + 1} on ${poss(S.name[t.b])} similar list` : "";
+    const words = sc == null ? "" : sc >= 0.8 ? "Very close neighbours" : sc >= 0.6 ? "Closely related" : sc >= 0.3 ? "Some things in common" : "Little in common";
+    const diff = (x, y, name) => { const g = only(x.g, y.g), k = only(x.kw, y.kw).slice(0, 6); return g.length || k.length
+      ? `<div style="margin-top:6px"><div class="hint-sm" style="margin:0 0 4px">Only ${esc(name)}</div>${chips([...g, ...k])}</div>` : ""; };
+    return head + `
+      ${sc == null ? "" : `<div style="margin-top:12px"><span class="score">${pct(sc)}</span> <span style="color:var(--muted)">alike</span>
+        <div class="meter"><i style="width:${pct(sc)}"></i></div><div class="hint-sm" style="margin:0">${words}${rank ? " · " + rank : ""}</div></div>`}</div>
+      <section><h4>Why they sit together</h4>${shared.length
+        ? `<dl class="facts">${shared.map(([h, v]) => `<dt>${h}</dt><dd>${chips(v, "shared")}</dd>`).join("")}</dl>`
+        : `<p class="hint-sm">Nothing obvious in common. Any similarity comes from many small overlaps.</p>`}</section>
+      <section><h4>Where they differ</h4>${diff(A, B, S.name[t.a])}${diff(B, A, S.name[t.b])}</section>
+      <section class="tool-actions"><button class="btn" data-act="bridge">⤳ Bridge between them</button><button class="btn" data-act="swap">⇄ Swap</button><button class="btn" data-act="clear">Clear</button></section>`;
+  }
+
+  // ---- drawing helpers for tools (called from render)
+  function drawTool() {
+    if (!tool || tool.kind === "region") return;
+    const pts = tool.kind === "bridge" ? (tool.path || []) : [tool.a, tool.b];
+    if (pts.length < 2) return;
+    const P = pts.map((i) => [S.x[i] * view.s + view.x, S.y[i] * view.s + view.y]);
+    ctx.save(); ctx.lineJoin = ctx.lineCap = "round";
+    if (tool.kind === "compare") ctx.setLineDash([6, 6]);
+    for (const [w, c] of [[5, T.halo], [2.2, T.sel]]) {
+      ctx.lineWidth = w; ctx.strokeStyle = c; ctx.beginPath(); P.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    P.forEach(([x, y], k) => {
+      const end = k === 0 || k === P.length - 1, r = end ? 6.5 : 4.2;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fillStyle = end ? T.sel : T.bg; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = T.sel; ctx.stroke();
+    });
+    ctx.restore();
+  }
+  const toolNodes = () => (!tool ? [] : tool.kind === "bridge" ? (tool.path || []) : tool.kind === "compare" ? [tool.a, tool.b]
+    : tool.kind === "foryou" && tool.onMap && tool.recs ? tool.recs.slice(0, 12).map((r) => r.i) : []);
+  function labelAt(x, y) {
+    for (let k = labelHits.length - 1; k >= 0; k--) { const [b, c] = labelHits[k]; if (x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]) return c; }
+    return -1;
+  }
+  function showRegionTip(c, x, y) {
+    const k = D.clusters[c];
+    tip.textContent = `${k.label} · ${k.size.toLocaleString()} shows · click for the region guide`; tip.style.display = "block";
+    const w = tip.offsetWidth; tip.style.left = Math.min(x + 14, W - w - 8) + "px"; tip.style.top = (y + 14) + "px";
+  }
+
+  // ---- era animation: the map grows year by year
+  let era = null;
+  const eraHidden = (i) => era !== null && (!S.y0[i] || S.y0[i] > era.year);
+  function startEra() {
+    const ys = S.y0.filter(Boolean); if (!ys.length) return;
+    const min = Math.max(1940, Math.min(...ys)), max = Math.max(...ys);
+    const byYear = new Uint32Array(max - min + 2);  // cumulative shows started by each year
+    for (const y of ys) if (y <= max) byYear[Math.max(0, y - min)]++;
+    for (let k = 1; k < byYear.length; k++) byYear[k] += byYear[k - 1];
+    const clYears = D.clusters.map(() => []);
+    for (let i = 0; i < N; i++) if (S.y0[i]) clYears[S.cl[i]].push(S.y0[i]);
+    clYears.forEach((a) => a.sort((x, y) => x - y));
+    era = { year: min, min, max, playing: true, timer: 0, byYear, clYears };
+    Object.assign($("eraScrub"), { min, max, step: 1, value: min });
+    $("eraBar").hidden = false; $("eraBtn").classList.add("on");
+    syncEraBar(); eraStep(); draw();
+  }
+  function stopEra() {
+    if (!era) return; clearTimeout(era.timer); era = null;
+    $("eraBar").hidden = true; $("eraBtn").classList.remove("on"); draw();
+  }
+  function eraStep() {
+    clearTimeout(era.timer);
+    era.timer = setTimeout(() => {
+      if (!era || !era.playing) return;
+      if (era.year >= era.max) { era.playing = false; syncEraBar(); return; }
+      era.year++; syncEraBar(); draw(); eraStep();
+    }, era.year < 1980 ? 180 : 320);  // sparse early decades go faster
+  }
+  function syncEraBar() {
+    $("eraYear").textContent = era.year; $("eraScrub").value = era.year;
+    const n = era.byYear[Math.min(era.byYear.length - 1, era.year - era.min)];
+    $("eraCount").textContent = `${n.toLocaleString()} shows had started by then`;
+    $("eraPlay").textContent = era.playing ? "⏸" : "⏵"; $("eraPlay").setAttribute("aria-label", era.playing ? "Pause" : "Play");
+  }
+  // share of a region's shows on air by the current era year (for its label)
+  function eraShare(c) {
+    const a = era.clYears[c]; let lo = 0, hi = a.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] <= era.year) lo = m + 1; else hi = m; }
+    return a.length ? lo / a.length : 0;
+  }
+  $("eraBtn").onclick = () => (era ? stopEra() : startEra());
+  $("eraClose").onclick = stopEra;
+  $("eraPlay").onclick = () => {
+    if (!era) return;
+    if (era.playing) { era.playing = false; clearTimeout(era.timer); }
+    else { if (era.year >= era.max) era.year = era.min; era.playing = true; eraStep(); }
+    syncEraBar(); draw();
+  };
+  $("eraScrub").oninput = (e) => { if (!era) return; era.playing = false; clearTimeout(era.timer); era.year = +e.target.value; syncEraBar(); draw(); };
+
+  // =================================================== personal: import, ratings, for you, coverage
+  let ratings = store.get("ratings", {});   // show id -> 1..10 (imported, or 10 for "Loved it")
+
+  // ---- ratings and "Loved it"
+  const isLoved = (id) => (ratings[id] || 0) >= 8;
+  function toggleLoved(i) {
+    const id = S.id[i];
+    if (isLoved(id)) delete ratings[id];
+    else { ratings[id] = 10; if (marks[id] !== "w") { marks[id] = "w"; store.set("marks", marks); rebuildMarks(); applyFilters(); } }
+    store.set("ratings", ratings);
+  }
+
+  // ---- reading export files
+  function parseCSV(text) {
+    text = text.replace(/^\uFEFF/, "");
+    const rows = []; let row = [], cell = "", q = false;
+    for (let k = 0; k < text.length; k++) {
+      const ch = text[k];
+      if (q) {
+        if (ch === '"') { if (text[k + 1] === '"') { cell += '"'; k++; } else q = false; }
+        else cell += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ",") { row.push(cell); cell = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && text[k + 1] === "\n") k++;
+        row.push(cell); cell = ""; if (row.some((c) => c !== "")) rows.push(row); row = [];
+      } else cell += ch;
+    }
+    row.push(cell); if (row.some((c) => c !== "")) rows.push(row);
+    if (!rows.length) return [];
+    const head = rows[0].map((h) => h.trim().toLowerCase());
+    return rows.slice(1).map((r) => Object.fromEntries(head.map((h, k) => [h, (r[k] || "").trim()])));
+  }
+  const tmdbNum = (v) => (/^\d+$/.test(String(v || "")) ? +v : null);
+  const imdbId = (v) => { const m = String(v || "").match(/tt\d{5,}/); return m ? m[0] : null; };
+  const yearOf = (v) => { const m = String(v || "").match(/(19|20)\d\d/); return m ? +m[0] : 0; };
+
+  // Each reader returns {source, entries: [{kind: "w"|"l", rating, tmdb, imdb, title, year, eps, profile}], skipped, note}
+  function readFile(name, text) {
+    const lname = name.toLowerCase();
+    if (/\.json$/i.test(name) || /^\s*[\[{]/.test(text)) {
+      let j; try { j = JSON.parse(text); } catch { return { source: name, error: "isn't valid JSON" }; }
+      if (j && j.app === "couch-cartography") return { source: name, error: "is a Couch Cartography backup; use Restore in My lists" };
+      const arr = Array.isArray(j) ? j : null;
+      if (!arr || !arr.some((x) => x && (x.show || x.ids))) return { source: name, error: "isn't a Trakt export file this site understands" };
+      const isList = /watchlist|list/.test(lname) || arr.some((x) => x.listed_at);
+      const out = { source: "Trakt · " + name, entries: [], skipped: 0 };
+      for (const x of arr) {
+        const sh = x.show || (x.type === "show" ? x : null);
+        if (!sh || !sh.ids) { out.skipped++; continue; }          // movies, people, etc.
+        const rated = typeof x.rating === "number" && x.type !== "episode" && x.type !== "season";
+        out.entries.push({ kind: isList ? "l" : "w", rating: rated ? x.rating : null, tmdb: tmdbNum(sh.ids.tmdb),
+          imdb: imdbId(sh.ids.imdb), title: sh.title, year: sh.year || 0, eps: x.plays || 0 });
+      }
+      return out;
+    }
+    const rows = parseCSV(text); if (!rows.length) return { source: name, error: "is empty" };
+    const has = (k) => k in rows[0];
+    // IMDb ratings / watchlist / list exports
+    if (has("const") && has("title type")) {
+      const list = has("position");
+      const out = { source: `IMDb ${list ? "watchlist" : "ratings"} · ${name}`, entries: [], skipped: 0 };
+      for (const r of rows) {
+        const tt = r["title type"].toLowerCase().replace(/\s/g, "");
+        if (!/^(tvseries|tvminiseries)$/.test(tt)) { out.skipped++; continue; }  // films, episodes, games
+        const rating = tmdbNum(r["your rating"]);
+        out.entries.push({ kind: list && !rating ? "l" : "w", rating, imdb: imdbId(r.const), title: r.title, year: yearOf(r.year) });
+      }
+      if (out.skipped) out.note = "films and single episodes are skipped";
+      return out;
+    }
+    // Netflix viewing activity: "Title,Date" or the full export's ViewingActivity.csv
+    if (has("title") && (has("date") || has("start time")) && !has("tmdb_id") && !has("imdb_id")) {
+      const out = { source: "Netflix · " + name, entries: [], skipped: 0, netflix: true, profiles: new Set() };
+      for (const r of rows) {
+        if (r["supplemental video type"]) { out.skipped++; continue; }           // trailers, teasers
+        const parts = r.title.split(": ").map((x) => x.trim()).filter(Boolean);
+        if (parts.length < 2) { out.skipped++; continue; }                         // films and one-offs
+        const profile = r["profile name"] || "";
+        if (profile) out.profiles.add(profile);
+        out.entries.push({ kind: "w", parts, title: parts[0], eps: 1, profile });
+      }
+      if (out.skipped) out.note = "films and trailers are skipped";
+      return out;
+    }
+    // anything else with ids or titles (TV Time, Serializd and spreadsheet exports)
+    const col = (...names) => names.find((n) => has(n));
+    const cT = col("tmdb_id", "tmdb", "tmdbid", "tmdb id"), cI = col("imdb_id", "imdb", "imdbid", "imdb id", "const");
+    const cN = col("title", "name", "show", "series", "show name", "tv show", "series name"), cY = col("year", "first_aired", "release year");
+    const cR = col("rating", "your rating", "my rating"), cS = col("status", "list", "type");
+    if (!cT && !cI && !cN) return { source: name, error: "has no title, TMDB or IMDb column" };
+    const out = { source: name, entries: [], skipped: 0 };
+    for (const r of rows) {
+      const st = cS ? r[cS].toLowerCase() : "";
+      if (/movie|film/.test(st)) { out.skipped++; continue; }
+      const rating = cR ? Math.round(+r[cR] * (+r[cR] <= 5 && /5/.test(cR) ? 2 : 1)) || null : null;
+      out.entries.push({ kind: /watchlist|plan|want|to watch|later/.test(st) ? "l" : "w", rating: rating && rating <= 10 ? rating : null,
+        tmdb: cT ? tmdbNum(r[cT]) : null, imdb: cI ? imdbId(r[cI]) : null, title: cN ? r[cN] : "", year: cY ? yearOf(r[cY]) : 0 });
+    }
+    return out;
+  }
+
+  // ---- matching to the map
+  const titleKey = (t) => fold(String(t || "")).replace(/&/g, " and ").replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/^(the|a|an) /, "");
+  let titleIdx = null, imdbIdx = null;
+  function buildTitleIndex() {
+    if (titleIdx) return titleIdx;
+    titleIdx = new Map();
+    const add = (k, i) => { if (!k) return; const a = titleIdx.get(k); a ? a.push(i) : titleIdx.set(k, [i]); };
+    for (let i = 0; i < N; i++) { add(titleKey(S.name[i]), i); if (S.on[i]) add(titleKey(S.on[i]), i); }
+    return titleIdx;
+  }
+  async function loadImdbIndex() {
+    if (imdbIdx) return imdbIdx;
+    imdbIdx = new Map();
+    try { const j = await (await fetch("data/ids.json")).json(); j.imdb.forEach((t, i) => t && imdbIdx.set(t, i)); } catch {}
+    return imdbIdx;
+  }
+  function byTitle(title, year) {
+    const hits = buildTitleIndex().get(titleKey(title)); if (!hits) return -1;
+    if (year) { const near = hits.filter((i) => S.y0[i] && Math.abs(S.y0[i] - year) <= 1); if (near.length) return near[0]; }
+    return hits[0];  // shows are in popularity order: the best-known one wins
+  }
+  function matchEntry(e) {
+    if (e.tmdb != null && byId.has(e.tmdb)) return byId.get(e.tmdb);
+    if (e.imdb && imdbIdx.has(e.imdb)) return imdbIdx.get(e.imdb);
+    if (e.parts) {  // Netflix: "Show: Season 1: Episode" - longest known prefix wins
+      for (let k = e.parts.length - 1; k >= 1; k--) { const i = byTitle(e.parts.slice(0, k).join(": ")); if (i >= 0) return i; }
+      return -1;
+    }
+    return e.title ? byTitle(e.title, e.year) : -1;
+  }
+
+  // ---- import review
+  async function startHistoryImport(ev) {
+    const files = [...ev.target.files]; ev.target.value = ""; if (!files.length) return;
+    const parsed = [];
+    for (const f of files) parsed.push(f.size > 30e6 ? { source: f.name, error: "is too big (over 30 MB)" } : readFile(f.name, await f.text()));
+    await loadImdbIndex();
+    for (const p of parsed) for (const e of p.entries || []) e.i = matchEntry(e);
+    const profiles = [...new Set(parsed.flatMap((p) => [...(p.profiles || [])]))];
+    selected = -1;
+    tool = { kind: "import", parsed, profiles, profile: profiles.length > 1 ? profiles[0] : "", sampled: false };
+    summariseImport(tool); showTool(); draw();
+  }
+  function summariseImport(t) {
+    const shows = new Map(), missing = new Map();
+    for (const p of t.parsed) {
+      p.matched = 0; p.used = 0;
+      for (const e of p.entries || []) {
+        if (t.profile && e.profile && e.profile !== t.profile) continue;
+        p.used++;
+        if (e.i < 0) { const k = e.title || "?"; missing.set(k, (missing.get(k) || 0) + 1); continue; }
+        p.matched++;
+        const s = shows.get(e.i) || { kind: "l", rating: null, eps: 0, netflix: false };
+        if (e.kind === "w") s.kind = "w";
+        if (e.rating) s.rating = Math.max(s.rating || 0, e.rating);
+        s.eps += e.eps || 0; if (p.netflix) s.netflix = true;
+        shows.set(e.i, s);
+      }
+    }
+    // Netflix rows are single episodes: 1-2 of them usually means a show was only sampled
+    const isSampled = (s) => s.netflix && s.kind === "w" && !s.rating && s.eps < 3;
+    t.shows = shows; t.missing = missing;
+    t.toAdd = [...shows].filter(([, s]) => t.sampled || !isSampled(s));
+    t.sampledCount = [...shows.values()].filter(isSampled).length;
+    t.newCount = t.toAdd.filter(([i, s]) => marks[S.id[i]] !== "w" && !(s.kind === "l" && marks[S.id[i]] === "l")).length;
+  }
+  function importHTML(t) {
+    const src = t.parsed.map((p) => `<div class="imp-src"><span>${esc(p.source)}</span><small>${p.error ? esc("This file " + p.error)
+      : `${p.matched} of ${p.used} matched${p.note ? " · " + esc(p.note) : ""}`}</small></div>`).join("");
+    const w = t.toAdd.filter(([, s]) => s.kind === "w").length, l = t.toAdd.length - w;
+    const rated = t.toAdd.filter(([, s]) => s.rating).length;
+    const list = t.toAdd.slice().sort((a, b) => a[0] - b[0]);
+    const row = ([i, s]) => showBtn(i, ` · ${s.kind === "w" ? (s.rating ? `rated ${s.rating}/10` : s.eps > 1 ? `${s.eps} episodes` : "watched") : "watchlist"}`);
+    const missing = [...t.missing].sort((a, b) => b[1] - a[1]);
+    return `<div class="tool-pad"><div class="tool-kicker">Import watch history</div>
+        <div class="tool-title">${t.toAdd.length.toLocaleString()} show${t.toAdd.length === 1 ? "" : "s"} found on the map</div>
+        <div class="sub" style="color:var(--muted);font-size:13px">${w.toLocaleString()} watched${l ? `, ${l.toLocaleString()} for your watchlist` : ""}${rated ? ` · ${rated} with your rating` : ""} · ${t.newCount.toLocaleString()} new to your lists</div></div>
+      <section>${src}</section>
+      ${t.profiles.length > 1 ? `<section><h4>Netflix profile</h4><select id="impProfile">${t.profiles.map((p) => `<option ${p === t.profile ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></section>` : ""}
+      ${t.sampledCount ? `<section><label class="check" style="margin:0"><input type="checkbox" id="impSampled" ${t.sampled ? "checked" : ""}>
+        Also add ${t.sampledCount} show${t.sampledCount === 1 ? "" : "s"} you only sampled (1–2 episodes)</label></section>` : ""}
+      <section class="tool-actions"><button class="btn on" data-imp="apply" ${t.toAdd.length ? "" : "disabled"}>Add to my lists</button><button class="btn" data-act="clear">Cancel</button></section>
+      ${list.length ? `<section><h4>Matched</h4><div class="sim">${list.slice(0, 40).map(row).join("")}</div>
+        ${list.length > 40 ? `<details><summary>Show all ${list.length.toLocaleString()}</summary><div class="sim">${list.slice(40).map(row).join("")}</div></details>` : ""}</section>` : ""}
+      ${missing.length ? `<section><h4>Not on the map (${missing.length.toLocaleString()})</h4><div class="miss">${missing.slice(0, 30).map(([k]) => esc(k)).join(" · ")}${missing.length > 30 ? " …" : ""}</div>
+        <div class="hint-sm">The map holds the 20,000 most popular shows, so smaller ones and films aren't on it.</div></section>` : ""}`;
+  }
+  function bindImport() {
+    const t = tool; if (!t || t.kind !== "import") return;
+    if ($("impProfile")) $("impProfile").onchange = (e) => { t.profile = e.target.value; summariseImport(t); showTool(); };
+    if ($("impSampled")) $("impSampled").onchange = (e) => { t.sampled = e.target.checked; summariseImport(t); showTool(); };
+    const apply = document.querySelector('[data-imp="apply"]');
+    if (apply) apply.onclick = () => {
+      let n = 0;
+      for (const [i, s] of t.toAdd) {
+        const id = S.id[i];
+        if (s.kind === "w") { if (marks[id] !== "w") n++; marks[id] = "w"; if (s.rating) ratings[id] = s.rating; }
+        else if (!marks[id]) { marks[id] = "l"; n++; }
+      }
+      store.set("marks", marks); store.set("ratings", ratings); rebuildMarks(); applyFilters();
+      toast(`Added ${n.toLocaleString()} show${n === 1 ? "" : "s"} to your lists.`);
+      openCoverage();
+    };
+  }
+
+  // ---- taste: who you are, as a few points in show space
+  function tasteShows() {
+    const out = [];
+    for (const [id, k] of Object.entries(marks)) {
+      if (k !== "w") continue; const i = byId.get(+id); if (i == null) continue;
+      const r = ratings[id];
+      out.push({ i, w: r == null ? 1 : r >= 8 ? 2 : r >= 6 ? 1 : r >= 5 ? 0.4 : -1 });  // 4/10 or less: didn't like it
+    }
+    return out;
+  }
+  async function computeForYou() {
+    const V = await loadVectors(), d = D.vectors.dims;
+    const norm = (computeForYou.norm ||= (() => { const n = new Float32Array(N);
+      for (let i = 0; i < N; i++) { let s = 0; for (let t = 0; t < d; t++) s += V[i * d + t] * V[i * d + t]; n[i] = Math.sqrt(s) || 1; } return n; })());
+    const vec = (i) => { const v = new Float32Array(d); for (let t = 0; t < d; t++) v[t] = V[i * d + t] / norm[i]; return v; };
+    const dot = (a, b) => { let s = 0; for (let t = 0; t < d; t++) s += a[t] * b[t]; return s; };
+    const cosTo = (c, i) => { let s = 0; const o = i * d; for (let t = 0; t < d; t++) s += c[t] * V[o + t]; return s / norm[i]; };
+    const all = tasteShows(), pos = all.filter((x) => x.w > 0).map((x) => ({ ...x, v: vec(x.i) }));
+    const neg = all.filter((x) => x.w < 0).map((x) => vec(x.i));
+    if (!pos.length) return { recs: [], basis: 0, loved: 0 };
+    // a few taste "centres" (tiny weighted k-means), so liking fantasy and crime doesn't average out to neither
+    const k = Math.min(6, Math.max(1, Math.ceil(Math.sqrt(pos.length))));
+    const cents = [pos.slice().sort((a, b) => b.w - a.w)[0].v.slice()];
+    while (cents.length < k) {
+      let far = null, fd = Infinity;
+      for (const p of pos) { const m = Math.max(...cents.map((c) => dot(c, p.v))); if (m < fd) { fd = m; far = p; } }
+      cents.push(far.v.slice());
+    }
+    let weight = new Array(k).fill(0);
+    const nearest = (v) => { let b = 0, bs = -2; cents.forEach((c, j) => { const s = dot(c, v); if (s > bs) { bs = s; b = j; } }); return b; };
+    for (let it = 0; it < 6; it++) {
+      const sum = cents.map(() => new Float32Array(d)); weight = new Array(k).fill(0);
+      for (const p of pos) { const b = nearest(p.v); for (let t = 0; t < d; t++) sum[b][t] += p.w * p.v[t]; weight[b] += p.w; }
+      sum.forEach((s, j) => { if (!weight[j]) return; let n = 0; for (let t = 0; t < d; t++) n += s[t] * s[t]; n = Math.sqrt(n) || 1; for (let t = 0; t < d; t++) cents[j][t] = s[t] / n; });
+    }
+    // score every unmarked show against its closest taste centre
+    const skip = new Set(all.map((x) => x.i)), lists = cents.map(() => []);
+    for (let i = 0; i < N; i++) {
+      if (markArr[i] || skip.has(i) || S.vc[i] < 15 || (match && !match[i])) continue;
+      let b = -1, bs = -2;
+      cents.forEach((c, j) => { if (!weight[j]) return; const s = cosTo(c, i); if (s > bs) { bs = s; b = j; } });
+      if (b < 0) continue;
+      let a = alike(bs);
+      for (const nv of neg) a -= 0.5 * alike(cosTo(nv, i));                       // close to something you rated low
+      const quality = S.vc[i] >= 50 ? Math.max(0, Math.min(1, (S.va[i] - 5.5) / 3)) : 0.3;
+      lists[b].push([i, a * (0.8 + 0.2 * quality), Math.max(0, a)]);
+    }
+    lists.forEach((l) => l.sort((x, y) => y[1] - x[1]));
+    // take turns between tastes, each getting a share of the 40 slots by how much it weighs
+    const total = weight.reduce((s, w) => s + w, 0), order = cents.map((_, j) => j).filter((j) => weight[j]).sort((x, y) => weight[y] - weight[x]);
+    const quota = order.map((j) => Math.max(3, Math.round(40 * weight[j] / total)));
+    const picked = [], pos_ = order.map(() => 0);
+    while (picked.length < 40 && order.some((j, o) => pos_[o] < Math.min(quota[o], lists[j].length)))
+      order.forEach((j, o) => { if (picked.length < 40 && pos_[o] < Math.min(quota[o], lists[j].length)) picked.push(lists[j][pos_[o]++]); });
+    const recs = picked.map(([i, , a]) => {
+      let why = -1, ws = -2;
+      for (const p of pos) { const s = cosTo(p.v, i); if (s > ws) { ws = s; why = p.i; } }
+      return { i, score: alike(ws), why };  // shown as "N% alike" the show it's recommended because of
+    });
+    return { recs, basis: pos.length, loved: pos.filter((p) => p.w >= 2).length };
+  }
+  async function openForYou() {
+    selected = -1; tool = { kind: "foryou", onMap: true }; showTool(); draw();
+    const me = tool;
+    try { Object.assign(me, await computeForYou()); } catch { me.error = true; }
+    if (tool === me && selected < 0) showTool();
+    draw();
+  }
+  function forYouHTML(t) {
+    const head = `<div class="tool-pad"><div class="tool-kicker">For you</div><div class="tool-title">Shows you might like</div>`;
+    if (t.error) return head + `<p>Couldn't load the show vectors. The map data may need rebuilding.</p></div>`;
+    if (!t.recs) return head + `<div class="sub" style="color:var(--muted)">Reading your taste…</div></div>`;
+    if (!t.basis) return head + `<p class="blurb" style="margin-top:8px">Mark a few shows as watched (or ♥ the ones you loved), or import your history from Trakt, IMDb or Netflix, and recommendations appear here.</p></div>
+      <section class="tool-actions"><button class="btn on" data-act="history">⇪ Import watch history</button></section>`;
+    const filt = match ? " · only shows matching your filters" : "";
+    return head + `<div class="sub" style="color:var(--muted);font-size:13px">From ${t.basis} watched show${t.basis === 1 ? "" : "s"}${t.loved ? `, ${t.loved} loved` : ""}${filt}</div></div>
+      <section class="tool-actions"><button class="btn ${t.onMap ? "on" : ""}" data-act="onmap">${t.onMap ? "✓ Shown on map" : "Show on map"}</button>
+        <button class="btn" data-act="coverage">Map coverage</button></section>
+      <section>${t.recs.length ? t.recs.map((r, k) => `<button class="rec" data-i="${r.i}"><span class="n">${k + 1}</span><span class="dot" style="background:${S.col[r.i]}"></span>
+        <span>${esc(S.name[r.i])} <small style="color:var(--muted)">${S.y0[r.i] || ""}</small><span class="why">because you watched ${esc(S.name[r.why])}</span></span>
+        <span class="sc" title="How alike it is to ${esc(S.name[r.why])}">${pct(r.score)}</span></button>`).join("") : `<p class="hint-sm">Nothing left that matches your filters.</p>`}</section>
+      <section class="hint-sm">Worked out in your browser from the shows you've watched; nothing is sent anywhere.</section>`;
+  }
+
+  // ---- coverage: which parts of the map you've explored
+  function coverageStats() {
+    const nC = D.clusters.length, seen = new Array(nC).fill(0);
+    let watched = 0;
+    for (let i = 0; i < N; i++) if (markArr[i] === 1) { seen[S.cl[i]]++; watched++; }
+    return { seen, watched, explored: seen.filter(Boolean).length };
+  }
+  function openCoverage() { selected = -1; tool = { kind: "coverage", onMap: true }; showTool(); draw(); }
+  function coverageHTML(t) {
+    const st = coverageStats(), nC = D.clusters.length; t.seen = st.seen;
+    const head = `<div class="tool-pad"><div class="tool-kicker">Map coverage</div>`;
+    if (!st.watched) return head + `<div class="tool-title">Your map is still blank</div>
+      <p class="blurb" style="margin-top:8px">Mark shows as watched or import your history, and the regions you've explored light up.</p></div>
+      <section class="tool-actions"><button class="btn on" data-act="history">⇪ Import watch history</button></section>`;
+    const rows = D.clusters.map((k, c) => [c, st.seen[c], k]);
+    const best = rows.filter((r) => r[1]).sort((a, b) => b[1] / b[2].size - a[1] / a[2].size).slice(0, 8);
+    const unseen = rows.filter((r) => !r[1]).sort((a, b) => b[2].size - a[2].size).slice(0, 8);
+    const reg = ([c, n, k], txt) => `<button class="reg-row" data-region="${c}"><span><span class="dot" style="display:inline-block;background:${k.color};margin-right:6px"></span>${esc(k.label)}</span><small>${txt}</small></button>`;
+    return head + `<div class="bigstat">${st.explored} <span style="font-size:17px;color:var(--muted)">of ${nC} regions explored</span></div>
+        <div class="meter"><i style="width:${pct(st.explored / nC)}"></i></div>
+        <div class="hint-sm" style="margin:0">${st.watched.toLocaleString()} shows watched</div></div>
+      <section class="tool-actions"><button class="btn ${t.onMap ? "on" : ""}" data-act="onmap">${t.onMap ? "✓ Shown on map" : "Show on map"}</button>
+        <button class="btn" data-act="foryou">✦ For you</button></section>
+      <section><h4>Where you've spent the most time</h4>${best.map((r) => reg(r, `${r[1]} of ${r[2].size}`)).join("")}</section>
+      ${unseen.length ? `<section><h4>Uncharted: biggest regions you haven't visited</h4>${unseen.map((r) => reg(r, `${r[2].size} shows`)).join("")}</section>` : ""}
+      <section class="hint-sm">On the map, regions you haven't explored are faded and your watched shows are ringed.</section>`;
+  }
+
+  $("forYouBtn").onclick = () => (tool && tool.kind === "foryou" && selected < 0 ? closeDetail() : openForYou());
+  $("historyBtn").onclick = () => $("historyFile").click();
+  $("historyFile").onchange = startHistoryImport;
+  $("coverageBtn").onclick = openCoverage;
+
+  // ---------------------------------------------------- shareable URL state
+  let hashTimer = 0, hashReady = false, lastHash = "";
+  // a link pasted into an already-open tab only changes the hash: apply it
+  addEventListener("hashchange", () => {
+    if (!D || decodeURIComponent(location.hash.slice(1)) === decodeURIComponent(lastHash)) return;
+    clearFilters(); closeDetail(); resetView(false); readHash();
+  });
+  function scheduleHash() { if (!hashReady) return; clearTimeout(hashTimer); hashTimer = setTimeout(writeHash, 300); }
+  function writeHash() {
+    const p = new URLSearchParams();
+    if (selected >= 0) p.set("show", S.id[selected]);
+    if (tool && tool.kind === "bridge") p.set("bridge", S.id[tool.a] + "," + S.id[tool.b]);
+    if (tool && tool.kind === "compare") p.set("compare", S.id[tool.a] + "," + S.id[tool.b]);
+    if (tool && tool.kind === "region") p.set("guide", D.clusters[tool.c].key);
+    if (F.region) p.set("region", F.region);
+    const ds = Math.min(W, H) / 1060, dx = (W - 1000 * ds) / 2, dy = (H - 1000 * ds) / 2 + 10;
+    const moved = Math.abs(view.s / ds - 1) > 0.02 || Math.abs(view.x - dx) > 4 || Math.abs(view.y - dy) > 4;
+    if (moved) {
+      p.set("zoom", (view.s / minScale).toFixed(2));
+      p.set("at", Math.round((W / 2 - view.x) / view.s) + "," + Math.round((H / 2 - view.y) / view.s));
+    }
+    const names = (set, arr) => [...set].map((i) => arr[i]).join("|");
+    if (F.genres.size) p.set("genres", names(F.genres, D.genres));
+    if (F.types.size) p.set("types", names(F.types, D.types));
+    if (F.kws.size) p.set("keywords", names(F.kws, D.keywords));
+    if (F.mode === "all") p.set("match", "all");
+    if (F.lang >= 0) p.set("lang", D.languages[F.lang]);
+    if (F.net >= 0) p.set("network", D.networks[F.net]);
+    if (F.status >= 0) p.set("status", D.statuses[F.status]);
+    if (F.rating) p.set("rating", F.rating);
+    if (F.from) p.set("from", F.from);
+    if (F.to) p.set("to", F.to);
+    if (F.votes) p.set("votes", F.votes);
+    if (F.origin >= 0) p.set("origin", D.countries[F.origin]);
+    if (sizeBy !== "pop") p.set("size", sizeBy);
+    if (F.hours.size) p.set("hours", [...F.hours].sort().join(","));
+    if (country !== "IN") p.set("country", country);
+    if (F.mine && services.size) p.set("services", [...services].join(","));
+    const h = p.toString().replace(/%7C/gi, "|").replace(/%2C/gi, ",");
+    lastHash = h;
+    if (h !== location.hash.slice(1)) history.replaceState(null, "", h ? "#" + h : location.pathname + location.search);
+  }
+  function readHash() {
+    const raw = location.hash.slice(1); if (!raw) return;
+    const p = new URLSearchParams(raw);
+    const idx = (k, arr) => (p.get(k) || "").split("|").map((v) => arr.indexOf(v)).filter((i) => i >= 0);
+    idx("genres", D.genres).forEach((i) => F.genres.add(i));
+    idx("types", D.types).forEach((i) => F.types.add(i));
+    idx("keywords", D.keywords).forEach((i) => F.kws.add(i));
+    if (p.get("match") === "all") setMode("all");
+    const one = (k, arr) => (p.has(k) ? arr.indexOf(p.get(k)) : -1);
+    F.lang = one("lang", D.languages); F.net = one("network", D.networks); F.status = one("status", D.statuses);
+    F.rating = +p.get("rating") || 0; F.from = +p.get("from") || 0; F.to = +p.get("to") || 0;
+    F.votes = Math.max(0, +p.get("votes") || 0); F.origin = one("origin", D.countries);
+    F.region = clusterByKey(+p.get("region")) >= 0 ? +p.get("region") : 0;
+    if (p.get("size") === "seasons") setSize("seasons", false);  // a link's view, not saved as your setting
+    (p.get("hours") || "").split(",").filter((v) => /^[0-3]$/.test(v)).forEach((v) => F.hours.add(+v));
+    if (/^[A-Z]{2}$/.test(p.get("country") || "")) {
+      country = p.get("country");  // not saved: it's someone else's link
+      if (PI) setCountry(country, false);
+    }
+    if (p.has("services")) {
+      const ids = p.get("services").split(",").map(Number).filter(Number.isInteger);
+      if (ids.length) { services = new Set(ids); F.mine = true; $("fMine").checked = true; }
+    }
+    $("fLang").value = F.lang; $("fNet").value = F.net; $("fStatus").value = F.status;
+    $("fRating").value = F.rating; syncEra(); $("fOrigin").value = F.origin;
+    $("fVotes").value = [...$("fVotes").options].some((o) => +o.value === F.votes) ? F.votes : 0;
+    syncChips(); applyFilters();
+    const z = +p.get("zoom"), at = (p.get("at") || "").split(",").map(Number);
+    const hasView = z > 0 && at.length === 2 && at.every(Number.isFinite);
+    if (hasView) {
+      view.s = Math.max(minScale * 0.7, Math.min(minScale * 60, z * minScale));
+      view.x = W / 2 - at[0] * view.s; view.y = H / 2 - at[1] * view.s;
+    }
+    const pair = (k) => (p.get(k) || "").split(",").map((v) => byId.get(+v));
+    const [ba, bb] = pair("bridge"), [ca, cb] = pair("compare"), gc = clusterByKey(+p.get("guide"));
+    if (ba != null && bb != null) runBridge(ba, bb, !hasView);
+    else if (ca != null && cb != null) runCompare(ca, cb, !hasView);
+    else if (p.has("guide") && gc >= 0) openRegion(gc);
+    const sid = +(p.get("show") || p.get("id"));  // "id" = links from the first version
+    if (sid && byId.has(sid)) select(byId.get(sid), !hasView && !tool);
+  }
+
+})();
+</script>
+</body>
+</html>

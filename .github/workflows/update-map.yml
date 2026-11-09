@@ -1,0 +1,101 @@
+name: Update map
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # every Monday 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      top_n:
+        description: "How many shows to map"
+        required: false
+        default: ""
+      fresh_layout:
+        description: "Rebuild the layout from scratch (shows will move)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # push data_status.json, manage the data-cache release
+  pages: write
+  id-token: write
+
+concurrency:
+  group: update-map
+  cancel-in-progress: false
+
+env:
+  TOP_N: ${{ inputs.top_n || vars.TOP_N || '20000' }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Restore TMDB cache from the data-cache release
+        run: |
+          mkdir -p cache
+          if gh release download data-cache --pattern tmdb.sqlite.gz --dir cache; then
+            gunzip -f cache/tmdb.sqlite.gz
+            echo "Restored cache ($(du -h cache/tmdb.sqlite | cut -f1))"
+          else
+            echo "No cache yet - this run will seed it."
+          fi
+
+      - name: Fetch from TMDB
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: python pipeline/fetch.py --top-n "$TOP_N"
+
+      - name: Build vectors
+        run: python pipeline/build_vectors.py --top-n "$TOP_N"
+
+      - name: Build map
+        run: python pipeline/build_map.py ${{ inputs.fresh_layout && '--fresh' || '' }}
+
+      # Runs even if a step above failed, so a long first fetch never loses progress.
+      - name: Save TMDB cache to the data-cache release
+        if: always()
+        run: |
+          [ -f cache/tmdb.sqlite ] || exit 0
+          gzip -kf cache/tmdb.sqlite
+          gh release view data-cache >/dev/null 2>&1 || \
+            gh release create data-cache --title "Data cache" --latest=false \
+              --notes "SQLite cache used by the Update map workflow. Not a release of the site."
+          gh release upload data-cache cache/tmdb.sqlite.gz --clobber
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      # A small commit each run counts as repository activity, which stops
+      # GitHub from disabling this schedule after 60 quiet days.
+      - name: Record run
+        run: |
+          cp site/data/status.json data_status.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data_status.json
+          git commit -m "Map updated $(date -u +%F)" || exit 0
+          git push
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
