@@ -10,6 +10,17 @@ An interactive 2-D map of about 20,000 TV shows, with similar shows placed near 
 
 Picking what to watch next usually means scrolling one service's rows, which only show what that service wants you to see. I wanted to see the whole landscape of TV at once: where a show sits, what's around it, and what I've never explored. I built it over a weekend as a hands-on exercise in turning embeddings and clustering into a product people can actually use.
 
+## What's new compared with Movie Map
+
+The idea and the pipeline design come from Mikey Guinness's [Movie Map](https://mikeyguinness.com/movies/), which maps films with genre, keyword and language filters, a details panel with similar films, and a label toggle. Couch Cartography applies the same approach to TV shows and adds:
+
+- Search, and a weekly automatic rebuild with a layout that stays stable between runs
+- Where to watch in any country, plus a "streaming on my services" filter and a time-to-finish filter
+- Watched, watchlist and "Loved it" marks, with imports from Trakt, IMDb and Netflix
+- "For you" recommendations that handle mixed tastes
+- Region guides, map coverage, bridges between two shows, compare, and the era animation
+- Shareable links and a light/dark theme
+
 ## Product decisions
 
 - **Recommendations that respect mixed taste.** "For you" finds a few separate taste centres (a small weighted k-means over the shows you've watched and loved) instead of one average. Someone who loves fantasy and crime gets good fantasy and good crime, not lukewarm shows that sit halfway between them. Every pick says "because you watched …" so it can be trusted or ignored.
