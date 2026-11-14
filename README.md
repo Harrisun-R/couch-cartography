@@ -12,9 +12,9 @@ Picking what to watch next usually means scrolling one service's rows, which onl
 
 ## What's new compared with Movie Map
 
-The idea and the pipeline design come from Mikey Guinness's [Movie Map](https://mikeyguinness.com/movies/), which maps films with genre, keyword and language filters, a details panel with similar films, and a label toggle. Couch Cartography applies the same approach to TV shows and adds:
+The idea and the pipeline design come from Mikey Guinness's [Movie Map](https://mikeyguinness.com/movies/), which maps about 37,000 films with search, genre/keyword highlighting, a language filter, labelled clusters, and a details panel with 20 similar films. Couch Cartography applies the same approach to TV shows and adds:
 
-- Search, and a weekly automatic rebuild with a layout that stays stable between runs
+- A weekly automatic rebuild, with a layout that stays stable between runs
 - Where to watch in any country, plus a "streaming on my services" filter and a time-to-finish filter
 - Watched, watchlist and "Loved it" marks, with imports from Trakt, IMDb and Netflix
 - "For you" recommendations that handle mixed tastes
