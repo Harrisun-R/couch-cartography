@@ -10,10 +10,8 @@
   site/data/details/NN.json (loaded only when a show is opened) and
   site/data/providers/<CC>.json (where to watch, loaded per country).
 
-Where to watch comes from TMDB's copy of JustWatch data (fetch.py). With
---justwatch it also uses data fetched directly from JustWatch
-(fetch_justwatch.py, optional and off by default). Each show records which
-source was used.
+Where to watch comes from TMDB's watch/providers data (fetch.py), which TMDB
+licenses from JustWatch.
 """
 from __future__ import annotations
 
@@ -42,7 +40,6 @@ OUT = ROOT / "site" / "data"
 DETAIL_CHUNKS = 40
 SIMILAR = 20
 NOTES = ROOT / "pipeline" / "cluster_notes.json"  # hand-written region names and blurbs
-JW_FRESH_DAYS = 21  # older direct JustWatch data loses to TMDB's weekly copy
 
 LANG = {
     "en": "English", "ja": "Japanese", "ko": "Korean", "zh": "Chinese", "cn": "Cantonese",
@@ -131,8 +128,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
     ap.add_argument("--fresh", action="store_true", help="ignore the previous layout")
-    ap.add_argument("--justwatch", action="store_true",
-                    help="also use direct JustWatch data from fetch_justwatch.py (off by default)")
     args = ap.parse_args()
 
     X = sparse.load_npz(BUILD / "vectors.npz")
@@ -316,7 +311,7 @@ def main():
         if (OUT / sub).exists():
             shutil.rmtree(OUT / sub)
         (OUT / sub).mkdir(parents=True)
-    wtw = where_to_watch(con, shows, use_jw=args.justwatch)
+    wtw = where_to_watch(shows)
     chunks = [{} for _ in range(DETAIL_CHUNKS)]
     for i, sh in enumerate(shows):
         mins, guess = runtime(sh)
@@ -331,8 +326,8 @@ def main():
             "va": sh["vote_average"], "vc": sh["vote_count"], "r": sh["content_rating"],
             "oc": sh["origin_country"], "g": sh["genres"], "ty": sh["type"],
             "sim": [int(ids[j]) for j in similar[i]],
-            # where to watch: source (j = JustWatch, t = TMDB, "" = none),
-            # countries with any offer, JustWatch page
+            # where to watch: source (t = TMDB, "" = none),
+            # countries with any offer, JustWatch page (unused, kept for the site)
             "ws": wtw[sh["id"]][1], "wc": len(wtw[sh["id"]][0]), "jw": wtw[sh["id"]][2],
         }
     for c, d in enumerate(chunks):
@@ -459,43 +454,20 @@ def write_graph_and_vectors(pairs, Z, points):
     points["vectors"] = {"dims": int(Z.shape[1]), "scale": 127, "base": round(base, 4)}
 
 
-def where_to_watch(con, shows, use_jw=False) -> dict:
+def where_to_watch(shows) -> dict:
     """{show id: (offers by country, source, JustWatch url)}.
 
-    Order of preference, per show:
-      1. fresh direct JustWatch data (it is complete: a missing country means
-         the show isn't offered there)
-      2. TMDB's where-to-watch, refreshed with every TMDB fetch
-      3. older direct JustWatch data (better than nothing)
-      4. nothing - the site says so and links to a JustWatch search
-    Without use_jw only 2 and 4 apply.
+    Uses TMDB's where-to-watch (JustWatch data, passed on by TMDB), refreshed
+    with every TMDB fetch. Shows with no data get an empty entry; the site
+    says so and links to a JustWatch search.
     """
-    jw = {}
-    try:
-        if not use_jw:
-            raise sqlite3.OperationalError("direct JustWatch data not wanted")
-        fresh = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=JW_FRESH_DAYS)).isoformat(timespec="seconds")
-        for sid, url, offers, at in con.execute(
-                "SELECT id, url, offers, offers_at FROM jw WHERE status IN ('ok','manual')"):
-            data = json.loads(offers) if offers else None
-            jw[sid] = (data if data is not None and (at or "") >= fresh else None, url or "", data or {})
-    except sqlite3.OperationalError:
-        pass  # JustWatch step has never run
     out = {}
     used = Counter()
     for sh in shows:
-        direct, url, old = jw.get(sh["id"], (None, "", {}))
         tmdb = {cc: o for cc, o in (sh.get("providers") or {}).items() if o}
-        if direct is not None and (direct or not tmdb):
-            out[sh["id"]] = (direct, "j" if direct else "", url)
-        elif tmdb:
-            out[sh["id"]] = (tmdb, "t", url)
-        elif old:
-            out[sh["id"]] = (old, "j", url)
-        else:
-            out[sh["id"]] = ({}, "", url)
+        out[sh["id"]] = (tmdb, "t", "") if tmdb else ({}, "", "")
         used[out[sh["id"]][1] or "none"] += 1
-    print(f"Where to watch: {used['j']} from JustWatch, {used['t']} from TMDB, {used['none']} with no data")
+    print(f"Where to watch: {used['t']} from TMDB, {used['none']} with no data")
     return out
 
 

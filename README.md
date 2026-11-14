@@ -2,6 +2,25 @@
 
 An interactive 2-D map of about 20,000 TV shows, with similar shows placed near each other.
 
+**[Open the live map →](https://harrisun-r.github.io/couch-cartography/)**
+
+![The Couch Cartography map: about 20,000 TV shows as coloured dots, grouped into labelled regions such as "Crime · Drama" and "Anime · Japanese"](docs/screenshot.jpg)
+
+## Why I built it
+
+Picking what to watch next usually means scrolling one service's rows, which only show what that service wants you to see. I wanted to see the whole landscape of TV at once: where a show sits, what's around it, and what I've never explored. I built it over a weekend as a hands-on exercise in turning embeddings and clustering into a product people can actually use.
+
+## Product decisions
+
+- **Recommendations that respect mixed taste.** "For you" finds a few separate taste centres (a small weighted k-means over the shows you've watched and loved) instead of one average. Someone who loves fantasy and crime gets good fantasy and good crime, not lukewarm shows that sit halfway between them. Every pick says "because you watched …" so it can be trusted or ignored.
+- **Private by design.** Watch history imports, marks and recommendations all run in the visitor's browser. Nothing is uploaded, there are no accounts, and there's no backend to secure.
+- **A map that doesn't move under you.** Each week's layout starts from last week's positions and is rotated to line up with them, and regions keep stable numbers. Returning visitors find shows where they left them.
+- **Zero running cost.** GitHub Pages hosts the site and a weekly GitHub Actions job rebuilds the data, so it stays current without servers or maintenance.
+- **Only licensed data.** Where-to-watch comes through TMDB's official API, which carries JustWatch's data, with the attribution both require.
+- **Tunable similarity.** "Similar" is a weighted mix of genres, keywords, networks, language, country and people (`BLOCKS` in `pipeline/build_vectors.py`), so the grouping can be adjusted without touching the model code.
+
+## Features
+
 - **Search** by title or original title; picking a result flies the map to that show.
 - **Details** for each show: overview, cast, how long it takes to finish, and its 20 most similar shows.
 - **Where to watch** in any country (India by default), plus a filter for "streaming on my services".
@@ -61,8 +80,7 @@ Optional: set a repository variable `TOP_N` (**Settings → Variables**) to chan
 
 Streaming data is JustWatch's, passed on by TMDB: each show's
 `watch/providers` comes in the same TMDB request as its details, for every
-country, and is refreshed every week. This is the officially allowed route,
-so it can't be blocked.
+country, and is refreshed every week through TMDB's official API.
 
 In the detail panel:
 
@@ -73,16 +91,6 @@ In the detail panel:
 - If nothing is known anywhere, it says "No where-to-watch data for this show
   yet" and links to a JustWatch search for the title. These are mostly older or
   regional shows that aren't streaming anywhere.
-
-**Optional: direct JustWatch data.** `pipeline/fetch_justwatch.py` can fetch
-offers straight from JustWatch with
-[simple-justwatch-python-api](https://github.com/Electronic-Mango/simple-justwatch-python-api),
-an unofficial client, and `build_map.py --justwatch` will then prefer that data.
-It is off by default and not in the workflow: JustWatch blocked it with
-`403 Forbidden` after a few hundred shows. To try it locally:
-`pip install simple-justwatch-python-api==1.4.0`, run the script, then build
-with `--justwatch`. `pipeline/justwatch_overrides.json` pins or skips matches
-by hand (`{"1396": "ts4", "12345": null}`).
 
 ## Region names and descriptions
 
@@ -144,3 +152,7 @@ To tune how shows group together, edit the `BLOCKS` weights at the top of `pipel
 ## Credits
 
 Data from [TMDB](https://www.themoviedb.org/). This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability is provided by [JustWatch](https://www.justwatch.com/) through TMDB; the site must keep that credit. The pipeline design follows Mikey Guinness's [Movie Map](https://mikeyguinness.com/projects/movie-map/).
+
+## License
+
+The code is released under the [MIT License](LICENSE). The data the pipeline downloads belongs to TMDB and JustWatch and is not covered by this license; it is used under TMDB's API terms, which allow non-commercial use with attribution.
